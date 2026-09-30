@@ -1,3 +1,5 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node'
+
 const ALLOWED_HOSTS = new Set(['youtube.com', 'youtu.be', 'tiktok.com', 'instagram.com'])
 const MAX_URL_LENGTH = 2048
 const PROVIDER_TIMEOUT_MS = 15_000
@@ -16,14 +18,8 @@ interface ProviderResponse {
   error?: { code?: string }
 }
 
-function json(body: Record<string, unknown>, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'Cache-Control': 'no-store',
-      'Content-Type': 'application/json; charset=utf-8',
-    },
-  })
+function json(response: VercelResponse, body: Record<string, unknown>, status = 200) {
+  return response.status(status).setHeader('Cache-Control', 'no-store').json(body)
 }
 
 function isAllowedSource(value: string) {
@@ -54,32 +50,27 @@ function providerErrorMessage(code?: string) {
   return 'Media tidak tersedia atau provider gagal memprosesnya.'
 }
 
-export default async function handler(request: Request) {
+export default async function handler(request: VercelRequest, response: VercelResponse) {
   if (request.method !== 'POST') {
-    return json({ error: 'Method tidak didukung.' }, 405)
+    return json(response, { error: 'Method tidak didukung.' }, 405)
   }
-  const contentLength = Number(request.headers.get('content-length') || 0)
+  const contentLength = Number(request.headers['content-length'] || 0)
   if (contentLength > 16_384) {
-    return json({ error: 'Request terlalu besar.' }, 413)
+    return json(response, { error: 'Request terlalu besar.' }, 413)
   }
 
-  let body: DownloadRequest
-  try {
-    body = await request.json() as DownloadRequest
-  } catch {
-    return json({ error: 'Request harus berupa JSON yang valid.' }, 400)
-  }
+  const body = (typeof request.body === 'object' && request.body !== null ? request.body : {}) as DownloadRequest
 
   const url = typeof body.url === 'string' ? body.url.trim() : ''
   const format: DownloadFormat = body.format === 'audio' ? 'audio' : 'video'
 
   if (!url || url.length > MAX_URL_LENGTH || !isAllowedSource(url)) {
-    return json({ error: 'URL HTTPS YouTube, TikTok, atau Instagram yang valid wajib diisi.' }, 400)
+    return json(response, { error: 'URL HTTPS YouTube, TikTok, atau Instagram yang valid wajib diisi.' }, 400)
   }
 
   const endpoint = providerEndpoint()
   if (!endpoint) {
-    return json({ error: 'Downloader belum dikonfigurasi. Tambahkan MEDIA_PROVIDER_URL di environment Vercel.' }, 503)
+    return json(response, { error: 'Downloader belum dikonfigurasi. Tambahkan MEDIA_PROVIDER_URL di environment Vercel.' }, 503)
   }
 
   const controller = new AbortController()
@@ -109,25 +100,25 @@ export default async function handler(request: Request) {
     const providerData = await providerResponse.json() as ProviderResponse
 
     if (!providerResponse.ok || providerData.status === 'error') {
-      return json({ error: providerErrorMessage(providerData.error?.code) }, 502)
+      return json(response, { error: providerErrorMessage(providerData.error?.code) }, 502)
     }
     if (providerData.status !== 'redirect' && providerData.status !== 'tunnel') {
-      return json({ error: 'Provider mengembalikan format hasil yang belum didukung.' }, 502)
+      return json(response, { error: 'Provider mengembalikan format hasil yang belum didukung.' }, 502)
     }
     if (!providerData.url) {
-      return json({ error: 'Provider tidak mengembalikan URL download.' }, 502)
+      return json(response, { error: 'Provider tidak mengembalikan URL download.' }, 502)
     }
 
-    return json({
+    return json(response, {
       downloadUrl: providerData.url,
       filename: providerData.filename || `kinosave.${format === 'audio' ? 'mp3' : 'mp4'}`,
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      return json({ error: 'Provider terlalu lama merespons. Coba lagi.' }, 504)
+      return json(response, { error: 'Provider terlalu lama merespons. Coba lagi.' }, 504)
     }
     console.error('media provider request failed', error)
-    return json({ error: 'Layanan download sedang tidak tersedia.' }, 502)
+    return json(response, { error: 'Layanan download sedang tidak tersedia.' }, 502)
   } finally {
     clearTimeout(timeout)
   }
