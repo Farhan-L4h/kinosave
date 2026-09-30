@@ -1,4 +1,52 @@
-# 🚀 Panduan Membuat Backend untuk KinoSave
+# Backend KinoSave di Vercel
+
+Implementasi sekarang menggunakan `api/download.ts` sebagai Vercel Function.
+Function memvalidasi URL YouTube, TikTok, dan Instagram, lalu meneruskan permintaan
+ke provider downloader yang dikonfigurasi melalui environment variable.
+
+## Konfigurasi Vercel
+
+Salin variabel dari `.env.example` ke Project Settings > Environment Variables:
+
+```text
+MEDIA_PROVIDER_URL=https://instance-provider-yang-anda-izinkan.example
+MEDIA_PROVIDER_API_KEY=opsional
+```
+
+`MEDIA_PROVIDER_URL` harus menunjuk ke provider atau instance yang Anda miliki atau
+memang memberi izin integrasi. Jangan memakai instance hosted publik tanpa izin.
+API key hanya boleh disimpan di environment Vercel, bukan di frontend.
+
+Endpoint frontend:
+
+```text
+POST /api/download
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{ "url": "https://...", "format": "video" }
+```
+
+Provider yang mengikuti kontrak Cobalt API menerima `POST /` dan mengembalikan
+`status` berupa `redirect` atau `tunnel`, serta field `url` dan `filename`.
+Response endpoint KinoSave dinormalisasi menjadi `downloadUrl` dan `filename`.
+
+## Batasan produksi
+
+- Link provider dapat kedaluwarsa, jadi hasil perlu segera diunduh.
+- Function tidak menyimpan file video dan tidak melakukan proxy file besar.
+- Rate limit provider tetap berlaku.
+- Gunakan hanya konten yang pengguna berhak simpan.
+
+Dokumentasi Cobalt API:
+https://github.com/imputnet/cobalt/blob/current/docs/api.md
+
+---
+
+Dokumen lama di bawah ini berisi opsi historis dan tidak lagi menjadi jalur implementasi utama.
 
 ## Kenapa Y2mate Bisa Berfungsi?
 
