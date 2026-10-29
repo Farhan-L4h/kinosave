@@ -1,286 +1,119 @@
-# Backend KinoSave di Vercel
+# Backend KinoSave
 
-Implementasi sekarang menggunakan `api/download.ts` sebagai Vercel Function.
-Function memvalidasi URL YouTube, TikTok, dan Instagram, lalu meneruskan permintaan
-ke provider downloader yang dikonfigurasi melalui environment variable.
-
-## Konfigurasi Vercel
-
-Salin variabel dari `.env.example` ke Project Settings > Environment Variables:
+KinoSave memakai Vercel Function tipis sebagai adapter ke **Cobalt self-hosted**.
+Function tidak mengunduh, menyimpan, atau mem-proxy file video; Cobalt yang
+memproses media dan mengembalikan URL sementara.
 
 ```text
-MEDIA_PROVIDER_URL=https://instance-provider-yang-anda-izinkan.example
-MEDIA_PROVIDER_API_KEY=opsional
+Browser -> Vercel Function /api/download -> Cobalt milik sendiri -> YouTube
 ```
 
-`MEDIA_PROVIDER_URL` harus menunjuk ke provider atau instance yang Anda miliki atau
-memang memberi izin integrasi. Jangan memakai instance hosted publik tanpa izin.
-API key hanya boleh disimpan di environment Vercel, bukan di frontend.
+## Konfigurasi
 
-Endpoint frontend:
+Salin `.env.example` menjadi `.env.local` untuk pengembangan:
 
 ```text
-POST /api/download
-Content-Type: application/json
+MEDIA_PROVIDER_URL=http://localhost:9000
+MEDIA_PROVIDER_API_KEY=
 ```
 
-Request:
+Di Vercel, isi `MEDIA_PROVIDER_URL` dengan URL publik Cobalt milik sendiri atau
+instance yang memberi izin integrasi. API key hanya disimpan sebagai environment
+variable server, bukan di frontend. Jangan commit API key atau cookies.
+
+Request KinoSave:
 
 ```json
-{ "url": "https://...", "format": "video" }
+{
+  "url": "https://www.youtube.com/watch?v=...",
+  "quality": "720",
+  "format": "video"
+}
 ```
 
-Provider yang mengikuti kontrak Cobalt API menerima `POST /` dan mengembalikan
-`status` berupa `redirect` atau `tunnel`, serta field `url` dan `filename`.
-Response endpoint KinoSave dinormalisasi menjadi `downloadUrl` dan `filename`.
+`quality` menerima `360`, `480`, `720`, `1080`, `1440`, `2160`, atau `max`.
+`format` adalah `video` atau `audio`. Audio diproses sebagai MP3.
 
-## Batasan produksi
+## Cobalt lokal
 
-- Link provider dapat kedaluwarsa, jadi hasil perlu segera diunduh.
-- Function tidak menyimpan file video dan tidak melakukan proxy file besar.
-- Rate limit provider tetap berlaku.
-- Gunakan hanya konten yang pengguna berhak simpan.
+File Docker Compose tersedia di `deploy/cobalt/docker-compose.yml`. Dari folder
+tersebut jalankan:
 
-Dokumentasi Cobalt API:
-https://github.com/imputnet/cobalt/blob/current/docs/api.md
-
----
-
-Dokumen lama di bawah ini berisi opsi historis dan tidak lagi menjadi jalur implementasi utama.
-
-## Kenapa Y2mate Bisa Berfungsi?
-
-Website seperti Y2mate, SaveFrom, atau sejenisnya memiliki **backend server** yang memproses video. Aplikasi KinoSave saat ini hanya **frontend (UI)** dan berjalan dalam **mode demo**.
-
-## Arsitektur yang Dibutuhkan
-
-```
-┌─────────────┐      HTTP Request       ┌─────────────┐
-│   Frontend  │ ──────────────────────> │   Backend   │
-│  (React UI) │                         │   Server    │
-└─────────────┘                         └─────────────┘
-                                               │
-                                               ▼
-                                        ┌─────────────┐
-                                        │  yt-dlp /   │
-                                        │ youtube-dl  │
-                                        │   Library   │
-                                        └─────────────┘
-                                               │
-                                               ▼
-                                        ┌─────────────┐
-                                        │  Download   │
-                                        │    Video    │
-                                        └─────────────┘
-```
-
-## Pilihan Teknologi Backend
-
-### 1. **Node.js + Express** (Recommended)
-
-**Install dependencies:**
 ```bash
-npm install express ytdl-core cors
+docker compose up -d
+curl http://localhost:9000/
 ```
 
-**Contoh kode `server.js`:**
-```javascript
-const express = require('express');
-const ytdl = require('ytdl-core');
-const cors = require('cors');
+Jika muncul `ECONNREFUSED`, Cobalt belum berjalan. `npm run dev` tidak dapat
+mengunduh video tanpa provider yang aktif.
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+`API_URL` harus sesuai alamat instance. Untuk pengembangan lokal, gunakan
+`http://localhost:9000/`. Pastikan Docker hidup dan port 9000 tidak digunakan
+proses lain.
 
-app.post('/api/download', async (req, res) => {
-  try {
-    const { url, type } = req.body;
-    
-    // Validasi URL YouTube
-    if (!ytdl.validateURL(url)) {
-      return res.status(400).json({ error: 'URL YouTube tidak valid' });
-    }
-    
-    // Ambil info video
-    const info = await ytdl.getInfo(url);
-    const format = type === 'audio' 
-      ? ytdl.chooseFormat(info.formats, { quality: 'highestaudio' })
-      : ytdl.chooseFormat(info.formats, { quality: 'highest' });
-    
-    res.json({
-      downloadUrl: format.url,
-      filename: `${info.videoDetails.title}.${type === 'audio' ? 'mp3' : 'mp4'}`
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+Dokumentasi resmi:
+- https://github.com/imputnet/cobalt/blob/current/docs/api.md
+- https://github.com/imputnet/cobalt/blob/current/docs/run-an-instance.md
 
-app.listen(3001, () => {
-  console.log('Server running on http://localhost:3001');
-});
-```
+## Menjalankan aplikasi lokal
 
-**Jalankan:**
+Project ini sekarang memiliki adapter development-only di `vite.config.ts`, jadi
+`npm run dev` sudah meneruskan `/api/download` ke handler yang sama dengan
+Vercel Function. Jalankan:
+
 ```bash
-node server.js
+npm install
+npm run dev
 ```
 
-**Update Vite config untuk proxy:**
-```javascript
-// vite.config.ts
-export default defineConfig({
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true
-      }
-    }
-  }
-});
+Setelah server hidup, buka alamat yang ditampilkan CLI dan pastikan
+`MEDIA_PROVIDER_URL` di `.env.local` aktif. Untuk fallback yt-dlp lokal, jalankan
+service di `deploy/ytdlp/server.mjs` pada port 9001 terlebih dahulu. Alternatifnya, `vercel dev` juga
+dapat digunakan tanpa `--prod`, tetapi tidak diperlukan untuk development biasa.
+Jangan gunakan instance Cobalt publik tanpa izin.
+
+## Batasan dan legal
+
+- URL hasil Cobalt dapat kedaluwarsa; mulai download segera setelah hasil siap.
+- IP datacenter dapat diblokir YouTube. Server rumah atau konfigurasi cookies
+  yang sah mungkin diperlukan.
+- Gunakan hanya video milik sendiri, berlisensi terbuka, atau yang memang boleh
+  disimpan. Mengunduh konten tertentu dapat melanggar Terms of Service dan hak
+  cipta.
+- Jika Cobalt tidak cocok, gunakan microservice terpisah berbasis yt-dlp dan
+  ffmpeg di luar Vercel dengan autentikasi, rate limit, batas durasi, dan folder
+  temporary. Jangan menaruh proses download video besar di Vercel Function.
+
+## Alternatif lokal: yt-dlp + ffmpeg
+
+Alternatif ini hanya untuk service lokal/terpisah, bukan untuk Vercel Function.
+Install `yt-dlp` dan `ffmpeg` pada mesin service, lalu gunakan selector berikut:
+
+```text
+yt-dlp -f "bestvideo[height<=720]+bestaudio/best[height<=720]" --merge-output-format mp4 URL
+yt-dlp -x --audio-format mp3 URL
 ```
 
----
+Service harus membatasi durasi, rate limit, jumlah proses bersamaan, dan menghapus
+file temporary setelah download. Jangan mengembalikan path file lokal langsung ke
+browser; gunakan URL service yang dilindungi autentikasi.
 
-### 2. **Python + Flask**
+Contoh menjalankan adapter lokal dari root project:
 
-**Install dependencies:**
-```bash
-pip install flask flask-cors yt-dlp
+```powershell
+npm run download-server
 ```
 
-**Contoh kode `app.py`:**
-```python
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import yt_dlp
+Perintah tersebut sama dengan `node deploy\ytdlp\server.mjs`; jangan menjalankan
+`node server.mjs` dari root karena file tidak berada di sana. Untuk menjalankan
+service downloader dan Vite sekaligus:
 
-app = Flask(__name__)
-CORS(app)
-
-@app.route('/api/download', methods=['POST'])
-def download_video():
-    data = request.json
-    url = data.get('url')
-    download_type = data.get('type', 'video')
-    
-    try:
-        ydl_opts = {
-            'format': 'bestaudio/best' if download_type == 'audio' else 'best',
-            'quiet': True
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            download_url = info['url']
-            filename = f"{info['title']}.{'mp3' if download_type == 'audio' else 'mp4'}"
-            
-        return jsonify({
-            'downloadUrl': download_url,
-            'filename': filename
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(port=3001, debug=True)
+```powershell
+npm run dev:all
 ```
 
-**Jalankan:**
-```bash
-python app.py
+Install dependency Windows (PowerShell Administrator):
+
+```powershell
+choco install yt-dlp ffmpeg -y
 ```
-
----
-
-### 3. **Menggunakan API Pihak Ketiga**
-
-Beberapa API yang bisa digunakan:
-- **RapidAPI YouTube Downloader**
-- **YouTube Data API v3** (official, tapi tidak untuk download langsung)
-- **Cobalt API** (open source)
-- **y2mate API** (reverse engineered - tidak resmi)
-
-**Contoh dengan RapidAPI:**
-```javascript
-app.post('/api/download', async (req, res) => {
-  const { url } = req.body;
-  
-  const response = await fetch('https://youtube-mp36.p.rapidapi.com/dl', {
-    method: 'GET',
-    headers: {
-      'X-RapidAPI-Key': 'YOUR_API_KEY',
-      'X-RapidAPI-Host': 'youtube-mp36.p.rapidapi.com'
-    }
-  });
-  
-  const data = await response.json();
-  res.json(data);
-});
-```
-
----
-
-## Deploy Backend ke Cloud
-
-### **Vercel** (untuk Node.js)
-```bash
-npm install -g vercel
-vercel
-```
-
-### **Railway** (untuk Python/Node.js)
-```bash
-# Push ke GitHub, lalu connect di railway.app
-```
-
-### **Heroku** (untuk semua)
-```bash
-heroku create kinosave-api
-git push heroku main
-```
-
-### **DigitalOcean / AWS / Google Cloud**
-- Deploy sebagai Docker container
-- Gunakan PM2 untuk Node.js
-- Gunakan Gunicorn untuk Python
-
----
-
-## Pertimbangan Legal & Etika
-
-⚠️ **PENTING:**
-- Mengunduh video yang memiliki hak cipta tanpa izin adalah **ILEGAL** di banyak negara
-- YouTube Terms of Service **melarang** download video tanpa izin
-- Gunakan hanya untuk:
-  - Video yang Anda miliki
-  - Video dengan lisensi Creative Commons
-  - Tujuan edukasi/pembelajaran pribadi
-  - Konten yang Anda buat sendiri
-
----
-
-## Alternatif: Ubah Mode Demo ke Production
-
-Untuk sementara, ubah `demoMode` menjadi `false` di `Conten.tsx`:
-
-```typescript
-const [demoMode] = useState(false); // Ubah jadi false setelah backend ready
-```
-
-Lalu pastikan backend Anda sudah jalan di `http://localhost:3001` atau update endpoint-nya.
-
----
-
-## Resources
-
-- [yt-dlp Documentation](https://github.com/yt-dlp/yt-dlp)
-- [ytdl-core npm](https://www.npmjs.com/package/ytdl-core)
-- [YouTube API](https://developers.google.com/youtube/v3)
-- [Flask CORS](https://flask-cors.readthedocs.io/)
-
----
-
-**Made with ❤️ for KinoSave**

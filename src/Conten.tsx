@@ -6,6 +6,7 @@ const MAX_HISTORY = 20
 
 type Platform = 'youtube' | 'tiktok' | 'instagram'
 type Format = 'video' | 'audio'
+type Quality = '360' | '480' | '720' | '1080' | '1440' | '2160'
 
 interface HistoryEntry {
   id: string
@@ -20,6 +21,12 @@ interface DownloadResult {
   downloadUrl: string
   filename: string
   platform: Platform
+}
+
+interface DebugLog {
+  id: string
+  time: string
+  message: string
 }
 
 const PLATFORM_LABELS: Record<Platform, string> = {
@@ -64,12 +71,17 @@ function platformMark(platform: Platform) {
 export default function KinoSave() {
   const [url, setUrl] = useState('')
   const [format, setFormat] = useState<Format>('video')
+  const [quality, setQuality] = useState<Quality>('720')
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<DownloadResult | null>(null)
   const [notice, setNotice] = useState('')
+  const [debugLogs, setDebugLogs] = useState<DebugLog[]>([])
+  const [isLogOpen, setIsLogOpen] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [progressLabel, setProgressLabel] = useState('')
 
   useEffect(() => {
     setHistory(readHistory())
@@ -81,6 +93,16 @@ export default function KinoSave() {
     setError('')
     setResult(null)
     setNotice('')
+    setProgress(0)
+    setProgressLabel('')
+  }
+
+  function addDebugLog(message: string) {
+    setDebugLogs((current) => [...current.slice(-19), {
+      id: crypto.randomUUID(),
+      time: new Date().toLocaleTimeString('id-ID'),
+      message,
+    }])
   }
 
   function addHistory(value: string, platform: Platform, selectedFormat: Format, status: HistoryEntry['status']) {
@@ -105,31 +127,58 @@ export default function KinoSave() {
 
     if (!normalizedUrl) {
       setError('Tempelkan link terlebih dahulu.')
+      addDebugLog('Validasi gagal: URL kosong.')
       return
     }
-    if (!platform) {
-      setError('Link harus berasal dari YouTube, TikTok, atau Instagram.')
+    if (platform !== 'youtube') {
+      setError('Link harus berasal dari YouTube.')
+      addDebugLog(`Validasi gagal: host bukan YouTube (${platform || 'tidak dikenali'}).`)
       return
     }
 
     setIsLoading(true)
+    setProgress(8)
+    setProgressLabel('Menghubungi server downloader...')
+    addDebugLog(`Memulai request: ${format.toUpperCase()} ${quality}p ke /api/download.`)
     addHistory(normalizedUrl, platform, format, 'pending')
 
+    let progressTimer: number | undefined
     try {
+      progressTimer = window.setInterval(() => {
+        setProgress((current) => {
+          if (current >= 88) return current
+          if (current < 35) setProgressLabel('Mengambil metadata YouTube...')
+          else if (current < 70) setProgressLabel(format === 'video' ? 'Mengunduh dan menggabungkan media...' : 'Mengunduh dan menyiapkan MP3...')
+          else setProgressLabel(format === 'video' ? 'Mengonversi ke MP4 kompatibel...' : 'Menyiapkan file audio...')
+          return Math.min(current + 4, 88)
+        })
+      }, 900)
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: normalizedUrl, format }),
+        body: JSON.stringify({ url: normalizedUrl, quality, format }),
       })
       const data = await response.json().catch(() => ({}))
+      window.clearInterval(progressTimer)
+      const responseMessage = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`
+      addDebugLog(`Response API: HTTP ${response.status}${data.error ? ` - ${responseMessage}` : ' - berhasil'}`)
       if (!response.ok) throw new Error(data.error || 'Layanan download belum tersedia.')
-      if (!data.downloadUrl) throw new Error('Server tidak mengembalikan link download.')
+      if (!data.downloadUrl) {
+        addDebugLog('Response gagal: downloadUrl tidak ada.')
+        throw new Error('Server tidak mengembalikan link download.')
+      }
 
       setResult({ downloadUrl: data.downloadUrl, filename: data.filename || 'kinosave-download', platform })
+      setProgress(100)
+      setProgressLabel('Selesai. File siap diunduh.')
+      addDebugLog(`Download siap: ${data.filename || 'kinosave-download'}.`)
       addHistory(normalizedUrl, platform, format, 'completed')
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Terjadi kesalahan. Coba lagi.')
+      const message = requestError instanceof Error ? requestError.message : 'Terjadi kesalahan. Coba lagi.'
+      addDebugLog(`Request gagal: ${message}`)
+      setError(message)
     } finally {
+      if (progressTimer !== undefined) window.clearInterval(progressTimer)
       setIsLoading(false)
     }
   }
@@ -172,7 +221,7 @@ export default function KinoSave() {
           <div className="hero-copy">
             <p className="eyebrow">MEDIA LINK TOOL</p>
             <h1>Download tanpa muter-muter.</h1>
-            <p className="hero-description">Satu tempat untuk memproses link YouTube, TikTok, dan Instagram.</p>
+            <p className="hero-description">Satu tempat untuk memproses link YouTube.</p>
             <button className="primary-button hero-button" onClick={() => setIsModalOpen(true)}>PASTE LINK <span aria-hidden="true">↗</span></button>
           </div>
           <div className="hero-stamp" aria-hidden="true">
@@ -206,9 +255,20 @@ export default function KinoSave() {
               <div className="form-row">
                 <div className="format-control">
                   <label htmlFor="format">Format</label>
-                  <select id="format" value={format} onChange={(event) => setFormat(event.target.value as Format)}>
+                  <select id="format" value={format} onChange={(event) => { setFormat(event.target.value as Format); resetFeedback() }}>
                     <option value="video">VIDEO / MP4</option>
                     <option value="audio">AUDIO / MP3</option>
+                  </select>
+                </div>
+                <div className="format-control">
+                  <label htmlFor="quality">Quality</label>
+                  <select id="quality" value={quality} onChange={(event) => { setQuality(event.target.value as Quality); resetFeedback() }} disabled={format === 'audio'}>
+                    <option value="360">360P</option>
+                    <option value="480">480P</option>
+                    <option value="720">720P</option>
+                    <option value="1080">1080P</option>
+                    <option value="1440">1440P</option>
+                    <option value="2160">2160P</option>
                   </select>
                 </div>
                 <div className="platform-detected">
@@ -219,6 +279,13 @@ export default function KinoSave() {
               <button className="primary-button submit-button" type="submit" disabled={isLoading}>
                 {isLoading ? 'PROCESSING...' : 'PROCESS LINK'} <span aria-hidden="true">↗</span>
               </button>
+              {isLoading && (
+                <div className="progress-area" role="status" aria-live="polite">
+                  <div className="progress-meta"><span>{progressLabel}</span><strong>{progress}%</strong></div>
+                  <div className="progress-track"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
+                  <small>Jangan tutup halaman sampai proses selesai.</small>
+                </div>
+              )}
               {notice && <p className="notice" role="status">{notice}</p>}
               {error && <p className="error-message" role="alert">{error}</p>}
               {result && (
@@ -231,6 +298,21 @@ export default function KinoSave() {
                 </div>
               )}
             </form>
+            <section className="debug-log">
+              <button className="debug-log-toggle" type="button" onClick={() => setIsLogOpen((open) => !open)} aria-expanded={isLogOpen}>
+                {isLogOpen ? 'HIDE DEBUG LOG' : 'SHOW DEBUG LOG'} <span>{debugLogs.length ? `(${debugLogs.length})` : ''}</span>
+              </button>
+              {isLogOpen && (
+                <div className="debug-log-box" role="log" aria-live="polite">
+                  {debugLogs.length === 0 ? (
+                    <p>Belum ada aktivitas.</p>
+                  ) : (
+                    debugLogs.map((entry) => <p key={entry.id}><time>{entry.time}</time> {entry.message}</p>)
+                  )}
+                  {debugLogs.length > 0 && <button className="debug-log-clear" type="button" onClick={() => setDebugLogs([])}>CLEAR LOG</button>}
+                </div>
+              )}
+            </section>
             <p className="legal-note">Gunakan hanya untuk konten yang kamu miliki atau diizinkan untuk disimpan.</p>
           </div>
 
@@ -269,7 +351,7 @@ export default function KinoSave() {
         </section>
 
         <footer className="footer-bar">
-          <span>SUPPORTED: YOUTUBE / TIKTOK / INSTAGRAM</span>
+          <span>SUPPORTED: YOUTUBE</span>
           <span>YOUR DATA STAYS IN THIS BROWSER</span>
         </footer>
       </main>
