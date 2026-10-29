@@ -72,6 +72,7 @@ export default function KinoSave() {
   const [url, setUrl] = useState('')
   const [format, setFormat] = useState<Format>('video')
   const [quality, setQuality] = useState<Quality>('720')
+  const [availableQualities, setAvailableQualities] = useState<Quality[]>(['360', '480', '720', '1080', '1440', '2160'])
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -88,6 +89,29 @@ export default function KinoSave() {
   }, [])
 
   const detectedPlatform = useMemo(() => detectPlatform(url.trim()), [url])
+
+  async function loadAvailableQualities(value: string) {
+    if (detectPlatform(value) !== 'youtube') return
+    try {
+      const response = await fetch('/api/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: value }),
+      })
+      const data = await response.json() as { resolutions?: unknown }
+      if (!response.ok || !Array.isArray(data.resolutions) || data.resolutions.length === 0) return
+      const next = data.resolutions
+        .filter((item): item is string => typeof item === 'string')
+        .filter((item): item is Quality => ['360', '480', '720', '1080', '1440', '2160'].includes(item as Quality))
+      if (next.length > 0) {
+        setAvailableQualities(next)
+        if (!next.includes(quality)) setQuality(next[next.length - 1])
+        addDebugLog(`Resolusi tersedia: ${next.map((item) => `${item}p`).join(', ')}.`)
+      }
+    } catch {
+      addDebugLog('Metadata resolusi tidak tersedia; memakai pilihan standar.')
+    }
+  }
 
   function resetFeedback() {
     setError('')
@@ -247,6 +271,7 @@ export default function KinoSave() {
                   id="media-url"
                   value={url}
                   onChange={(event) => { setUrl(event.target.value); resetFeedback() }}
+                  onBlur={(event) => { void loadAvailableQualities(event.target.value.trim()) }}
                   placeholder="https://..."
                   autoComplete="off"
                 />
@@ -263,12 +288,7 @@ export default function KinoSave() {
                 <div className="format-control">
                   <label htmlFor="quality">Quality</label>
                   <select id="quality" value={quality} onChange={(event) => { setQuality(event.target.value as Quality); resetFeedback() }} disabled={format === 'audio'}>
-                    <option value="360">360P</option>
-                    <option value="480">480P</option>
-                    <option value="720">720P</option>
-                    <option value="1080">1080P</option>
-                    <option value="1440">1440P</option>
-                    <option value="2160">2160P</option>
+                    {availableQualities.map((item) => <option key={item} value={item}>{item}P</option>)}
                   </select>
                 </div>
                 <div className="platform-detected">

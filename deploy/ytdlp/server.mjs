@@ -79,6 +79,17 @@ function safeFileTitle(value) {
   return cleaned.slice(0, 160) || 'kinosave-download'
 }
 
+function availableFilePath(title, extension) {
+  const base = `${title}.${extension}`
+  let candidate = base
+  let index = 2
+  while (existsSync(join(downloadDir, candidate))) {
+    candidate = `${title} (${index}).${extension}`
+    index += 1
+  }
+  return { fileName: candidate, filePath: join(downloadDir, candidate) }
+}
+
 async function runDownload(url, quality, format, outputTemplate, outputPath, id) {
   const args = [
     '--no-playlist',
@@ -119,7 +130,12 @@ async function runDownload(url, quality, format, outputTemplate, outputPath, id)
 
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url.startsWith('/files/')) {
-    const fileName = basename(request.url.slice('/files/'.length))
+    let fileName
+    try {
+      fileName = basename(decodeURIComponent(request.url.slice('/files/'.length)))
+    } catch {
+      return send(response, 400, { error: 'Nama file tidak valid.' })
+    }
     const filePath = join(downloadDir, fileName)
     if (!existsSync(filePath)) return send(response, 404, { error: 'File tidak ditemukan atau sudah kedaluwarsa.' })
     const contentType = fileName.endsWith('.mp3') ? 'audio/mpeg' : 'video/mp4'
@@ -128,6 +144,24 @@ const server = createServer(async (request, response) => {
       'Content-Disposition': `attachment; filename="${fileName}"`,
     })
     return createReadStream(filePath).pipe(response)
+  }
+  if (request.method === 'POST' && request.url === '/api/info') {
+    try {
+      const body = await readBody(request)
+      const url = typeof body.url === 'string' ? body.url.trim() : ''
+      if (!isYouTubeUrl(url)) return send(response, 400, { error: 'URL HTTPS YouTube yang valid wajib diisi.' })
+      const raw = await runCommand('yt-dlp', ['--dump-single-json', '--skip-download', '--no-playlist', url])
+      const info = JSON.parse(raw)
+      const resolutions = [...new Set((info.formats || [])
+        .filter((item) => item.vcodec && item.vcodec !== 'none' && item.height)
+        .map((item) => String(item.height))
+        .filter((height) => qualities.has(height)))]
+        .sort((a, b) => Number(a) - Number(b))
+      return send(response, 200, { title: safeFileTitle(info.title || ''), resolutions })
+    } catch (error) {
+      console.error('local yt-dlp info failed', error)
+      return send(response, 502, { error: 'Metadata YouTube tidak dapat diambil.' })
+    }
   }
   if (request.method !== 'POST' || request.url !== '/api/download') return send(response, 404, { error: 'Route tidak ditemukan.' })
   if (apiKey && request.headers.authorization !== `Api-Key ${apiKey}`) return send(response, 401, { error: 'API key lokal tidak valid.' })
@@ -145,9 +179,14 @@ const server = createServer(async (request, response) => {
     activeJobs.add(id)
     try {
       const title = await runDownload(url, quality, format, outputTemplate, outputPath, id)
-      const fileName = `${id}.${extension}`
-      if (!existsSync(join(downloadDir, fileName))) throw new Error('File hasil download tidak ditemukan.')
-      return send(response, 200, { status: 'tunnel', url: `http://${host}:${port}/files/${fileName}`, filename: `${title}.${extension}` })
+      if (!existsSync(outputPath)) throw new Error('File hasil download tidak ditemukan.')
+      const finalFile = availableFilePath(title, extension)
+      await new Promise((resolve, reject) => rename(outputPath, finalFile.filePath, (error) => error ? reject(error) : resolve()))
+      return send(response, 200, {
+        status: 'tunnel',
+        url: `http://${host}:${port}/files/${encodeURIComponent(finalFile.fileName)}`,
+        filename: finalFile.fileName,
+      })
     } finally {
       activeJobs.delete(id)
     }

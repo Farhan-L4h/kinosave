@@ -25,6 +25,22 @@ function readJsonBody(request: IncomingMessage): Promise<unknown> {
 }
 
 function localApiMiddleware(request: IncomingMessage, response: ServerResponse, next: () => void) {
+  if (request.url === '/api/info') {
+    void readJsonBody(request).then((body) => fetch('http://127.0.0.1:9001/api/info', {
+      method: 'POST',
+      headers: { 'Content-Type': request.headers['content-type'] || 'application/json' },
+      body: JSON.stringify(body),
+    })).then(async (providerResponse) => {
+      response.statusCode = providerResponse.status
+      response.setHeader('Content-Type', 'application/json')
+      response.end(await providerResponse.text())
+    }).catch(() => {
+      response.statusCode = 502
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ error: 'Service metadata lokal tidak aktif.' }))
+    })
+    return
+  }
   if (request.url !== '/api/download') return next()
 
   void readJsonBody(request)
