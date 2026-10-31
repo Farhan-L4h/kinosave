@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $keyFile = Join-Path $env:TEMP 'kinosave-provider-key.txt'
 $tunnelConfig = Join-Path $env:TEMP 'kinosave-tunnel.yml'
-$publicBaseUrl = 'https://kinosave.han06.web.id'
+$publicBaseUrl = 'https://api-kinosave.han06.web.id'
 
 if (-not (Test-Path (Join-Path $projectRoot 'deploy\ytdlp\server.mjs'))) {
   throw "Folder project KinoSave tidak valid: $projectRoot"
@@ -36,5 +36,5 @@ Start-Process powershell.exe -ArgumentList '-NoExit', '-NoLogo', '-Command', $se
 Start-Process powershell.exe -ArgumentList '-NoExit', '-NoLogo', '-Command', $tunnelCommand
 
 Write-Host 'KinoSave downloader dan Cloudflare Tunnel sedang dijalankan.'
-Write-Host "Website: https://kinosave.vercel.app"
+Write-Host "Website: https://kinosave.han06.web.id"
 Write-Host "Backend: $publicBaseUrl"

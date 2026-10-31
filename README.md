@@ -61,7 +61,7 @@ npm run start:server
 This opens two PowerShell windows:
 
 1. the `yt-dlp + ffmpeg` downloader on port 9001;
-2. the Cloudflare Named Tunnel for `kinosave.han06.web.id`.
+2. the Cloudflare Named Tunnel for `api-kinosave.han06.web.id`.
 
 The script expects these local files, which are intentionally outside Git:
 
@@ -87,14 +87,14 @@ npm run dev:all
 Configure these Vercel environment variables:
 
 ```env
-MEDIA_PROVIDER_URL=https://kinosave.han06.web.id/api/download
+MEDIA_PROVIDER_URL=https://api-kinosave.han06.web.id/api/download
 MEDIA_PROVIDER_API_KEY=<same key as LOCAL_DOWNLOAD_API_KEY>
 ```
 
 The downloader uses:
 
 ```env
-PUBLIC_BASE_URL=https://kinosave.han06.web.id
+PUBLIC_BASE_URL=https://api-kinosave.han06.web.id
 LOCAL_DOWNLOAD_API_KEY=<secret key>
 ```
 
