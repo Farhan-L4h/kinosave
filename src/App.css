@@ -45,6 +45,10 @@ h2 { margin-bottom: 0; font-size: 32px; line-height: .95; letter-spacing: -.06em
 .primary-button:hover, .secondary-button:hover { transform: translate(3px, 3px); box-shadow: 2px 2px 0 var(--ink); }
 .primary-button:active, .secondary-button:active { transform: translate(5px, 5px); box-shadow: none; }
 .primary-button:disabled { opacity: .55; cursor: wait; }
+.button-loader { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -2px; animation: button-spin .7s linear infinite; }
+.button-progress-track { display: block; height: 5px; margin-top: 8px; overflow: hidden; background: rgba(16, 16, 16, .3); border: 1px solid var(--ink); }
+.button-progress-fill { display: block; height: 100%; background: var(--ink); transition: width .35s ease; }
+@keyframes button-spin { to { transform: rotate(360deg); } }
 .hero-button { font-size: 12px; }
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(340px, .8fr); gap: 26px; }
 .download-panel, .history-panel { border: 3px solid var(--ink); background: var(--panel); color: var(--paper); padding: 30px; box-shadow: var(--shadow); }

@@ -37,8 +37,14 @@ const PLATFORM_LABELS: Record<Platform, string> = {
 
 function detectPlatform(value: string): Platform | null {
   try {
-    const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, '')
-    if (hostname === 'youtube.com' || hostname === 'youtu.be' || hostname.endsWith('.youtube.com')) return 'youtube'
+    const parsed = new URL(value)
+    const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '')
+    if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
+      return parsed.pathname === '/watch' && parsed.searchParams.has('v') ? 'youtube' : null
+    }
+    if (hostname === 'youtu.be') {
+      return parsed.pathname.length > 1 && parsed.pathname.slice(1).length >= 6 ? 'youtube' : null
+    }
     if (hostname === 'tiktok.com' || hostname.endsWith('.tiktok.com')) return 'tiktok'
     if (hostname === 'instagram.com' || hostname.endsWith('.instagram.com')) return 'instagram'
   } catch {
@@ -71,8 +77,10 @@ function platformMark(platform: Platform) {
 export default function KinoSave() {
   const [url, setUrl] = useState('')
   const [format, setFormat] = useState<Format>('video')
-  const [quality, setQuality] = useState<Quality>('720')
-  const [availableQualities, setAvailableQualities] = useState<Quality[]>(['360', '480', '720', '1080', '1440', '2160'])
+  const [quality, setQuality] = useState<Quality>('1080')
+  const [availableQualities, setAvailableQualities] = useState<Quality[]>([])
+  const [isInfoLoading, setIsInfoLoading] = useState(false)
+  const [infoProgress, setInfoProgress] = useState(12)
   const [videoTitle, setVideoTitle] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -89,10 +97,36 @@ export default function KinoSave() {
     setHistory(readHistory())
   }, [])
 
+  useEffect(() => {
+    const value = url.trim()
+    if (!value) {
+      setIsInfoLoading(false)
+      setInfoProgress(0)
+      setAvailableQualities([])
+      return
+    }
+    if (detectPlatform(value) !== 'youtube') {
+      setIsInfoLoading(false)
+      setInfoProgress(0)
+      setAvailableQualities([])
+      setError('Link tidak valid. Gunakan link HTTPS dari YouTube.')
+      return
+    }
+    const timer = window.setTimeout(() => { void loadAvailableQualities(value) }, 450)
+    return () => window.clearTimeout(timer)
+  // Metadata lookup runs after URL changes, with debounce to avoid duplicate requests.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url])
+
   const detectedPlatform = useMemo(() => detectPlatform(url.trim()), [url])
 
   async function loadAvailableQualities(value: string) {
-    if (detectPlatform(value) !== 'youtube') return
+    if (detectPlatform(value) !== 'youtube') {
+      setAvailableQualities([])
+      return
+    }
+    setIsInfoLoading(true)
+    setInfoProgress(18)
     try {
       const response = await fetch('/api/info', {
         method: 'POST',
@@ -107,11 +141,16 @@ export default function KinoSave() {
         .filter((item): item is Quality => ['360', '480', '720', '1080', '1440', '2160'].includes(item as Quality))
       if (next.length > 0) {
         setAvailableQualities(next)
+        setInfoProgress(100)
         if (!next.includes(quality)) setQuality(next[next.length - 1])
-        addDebugLog(`Resolusi tersedia: ${next.map((item) => `${item}p`).join(', ')}.`)
+        addDebugLog(`Metadata berhasil: judul="${typeof data.title === 'string' ? data.title : 'tanpa judul'}"; resolusi=${next.map((item) => `${item}p`).join(', ')}.`)
       }
     } catch {
-      addDebugLog('Metadata resolusi tidak tersedia; memakai pilihan standar.')
+      setAvailableQualities([])
+      setInfoProgress(0)
+      addDebugLog('Metadata gagal: resolusi media belum tersedia.')
+    } finally {
+      setIsInfoLoading(false)
     }
   }
 
@@ -161,11 +200,17 @@ export default function KinoSave() {
       addDebugLog(`Validasi gagal: host bukan YouTube (${platform || 'tidak dikenali'}).`)
       return
     }
+    if (isInfoLoading || availableQualities.length === 0) {
+      setError('Tunggu kualitas media selesai dimuat sebelum memproses link.')
+      addDebugLog('Validasi gagal: resolusi belum tersedia.')
+      return
+    }
 
     setIsLoading(true)
     setProgress(8)
     setProgressLabel('Menghubungi server downloader...')
-    addDebugLog(`Memulai request: ${format.toUpperCase()} ${quality}p ke /api/download.`)
+    addDebugLog(`Memulai request: format=${format.toUpperCase()}, kualitas=${quality}p, URL=${normalizedUrl}`)
+    addDebugLog('Validasi lolos: host YouTube dan kualitas media tersedia.')
     addHistory(normalizedUrl, platform, format, 'pending')
 
     let progressTimer: number | undefined
@@ -179,6 +224,7 @@ export default function KinoSave() {
           return Math.min(current + 4, 88)
         })
       }, 900)
+      addDebugLog('Mengirim request POST /api/download ke backend.')
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -187,10 +233,10 @@ export default function KinoSave() {
       const data = await response.json().catch(() => ({}))
       window.clearInterval(progressTimer)
       const responseMessage = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`
-      addDebugLog(`Response API: HTTP ${response.status}${data.error ? ` - ${responseMessage}` : ' - berhasil'}`)
+      addDebugLog(`Response backend: HTTP ${response.status}; status=${response.ok ? 'OK' : 'GAGAL'}${data.error ? `; pesan="${responseMessage}"` : '; payload diterima'}`)
       if (!response.ok) throw new Error(data.error || 'Layanan download belum tersedia.')
       if (!data.downloadUrl) {
-        addDebugLog('Response gagal: downloadUrl tidak ada.')
+        addDebugLog(`Response gagal: downloadUrl tidak ada; keys=${Object.keys(data).join(', ') || 'kosong'}.`)
         throw new Error('Server tidak mengembalikan link download.')
       }
 
@@ -277,7 +323,6 @@ export default function KinoSave() {
                   id="media-url"
                   value={url}
                   onChange={(event) => { setUrl(event.target.value); resetFeedback() }}
-                  onBlur={(event) => { void loadAvailableQualities(event.target.value.trim()) }}
                   placeholder="https://..."
                   autoComplete="off"
                 />
@@ -293,7 +338,8 @@ export default function KinoSave() {
                 </div>
                 <div className="format-control">
                   <label htmlFor="quality">Quality</label>
-                  <select id="quality" value={quality} onChange={(event) => { setQuality(event.target.value as Quality); resetFeedback() }} disabled={format === 'audio'}>
+                  <select id="quality" value={quality} onChange={(event) => { setQuality(event.target.value as Quality); resetFeedback() }} disabled={format === 'audio' || isInfoLoading || availableQualities.length === 0}>
+                    {availableQualities.length === 0 && <option value="">{isInfoLoading ? 'LOADING...' : 'ENTER YOUTUBE URL'}</option>}
                     {availableQualities.map((item) => <option key={item} value={item}>{item}P</option>)}
                   </select>
                 </div>
@@ -302,9 +348,16 @@ export default function KinoSave() {
                   <strong>{detectedPlatform ? PLATFORM_LABELS[detectedPlatform] : 'WAITING...'}</strong>
                 </div>
               </div>
-              <button className="primary-button submit-button" type="submit" disabled={isLoading}>
-                {isLoading ? 'PROCESSING...' : 'PROCESS LINK'} <span aria-hidden="true">↗</span>
+              <button className="primary-button submit-button" type="submit" disabled={isLoading || isInfoLoading || (Boolean(url.trim()) && detectedPlatform === 'youtube' && availableQualities.length === 0)}>
+                {isLoading ? <><span>PROCESSING... {progress}%</span><span className="button-progress-track" aria-hidden="true"><span className="button-progress-fill" style={{ width: `${progress}%` }} /></span></> : isInfoLoading ? <><span className="button-loader" aria-hidden="true" /> LOADING MEDIA...</> : 'PROCESS LINK'} {!isLoading && <span aria-hidden="true">↗</span>}
               </button>
+              {isInfoLoading && (
+                <div className="progress-area" role="status" aria-live="polite">
+                  <div className="progress-meta"><span>Mengambil metadata YouTube...</span><strong>{infoProgress}%</strong></div>
+                  <div className="progress-track"><div className="progress-fill" style={{ width: `${infoProgress}%` }} /></div>
+                  <small>Menyiapkan pilihan format dan resolusi.</small>
+                </div>
+              )}
               {isLoading && (
                 <div className="progress-area" role="status" aria-live="polite">
                   <div className="progress-meta"><span>{progressLabel}</span><strong>{progress}%</strong></div>
