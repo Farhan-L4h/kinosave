@@ -42,7 +42,9 @@ function detectPlatform(value: string): Platform | null {
     const parsed = new URL(value)
     const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '')
     if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
-      return parsed.pathname === '/watch' && parsed.searchParams.has('v') ? 'youtube' : null
+      const isWatchUrl = parsed.pathname === '/watch' && parsed.searchParams.get('v')
+      const isShortsUrl = parsed.pathname.startsWith('/shorts/') && parsed.pathname.slice('/shorts/'.length).split('/')[0].length >= 6
+      return isWatchUrl || isShortsUrl ? 'youtube' : null
     }
     if (hostname === 'youtu.be') {
       return parsed.pathname.length > 1 && parsed.pathname.slice(1).length >= 6 ? 'youtube' : null
