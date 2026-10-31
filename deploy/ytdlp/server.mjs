@@ -6,6 +6,7 @@ import { createServer } from 'node:http'
 
 const port = Number(process.env.PORT || 9001)
 const host = process.env.HOST || '127.0.0.1'
+const publicBaseUrl = process.env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '')
 const downloadDir = join(process.cwd(), 'downloads')
 const apiKey = process.env.LOCAL_DOWNLOAD_API_KEY?.trim()
 const maxConcurrent = 2
@@ -168,8 +169,9 @@ const server = createServer(async (request, response) => {
   try {
     const body = await readBody(request)
     const url = typeof body.url === 'string' ? body.url.trim() : ''
-    const format = body.format === 'audio' ? 'audio' : 'video'
-    const quality = typeof body.quality === 'string' && qualities.has(body.quality) ? body.quality : '720'
+    const format = body.format === 'audio' || body.downloadMode === 'audio' ? 'audio' : 'video'
+    const requestedQuality = body.quality ?? body.videoQuality
+    const quality = typeof requestedQuality === 'string' && qualities.has(requestedQuality) ? requestedQuality : '720'
     if (!isYouTubeUrl(url)) return send(response, 400, { error: 'URL HTTPS YouTube yang valid wajib diisi.' })
     if (activeJobs.size >= maxConcurrent) return send(response, 429, { error: 'Server lokal sedang sibuk. Coba lagi.' })
     const id = randomUUID()
@@ -184,7 +186,7 @@ const server = createServer(async (request, response) => {
       await new Promise((resolve, reject) => rename(outputPath, finalFile.filePath, (error) => error ? reject(error) : resolve()))
       return send(response, 200, {
         status: 'tunnel',
-        url: `http://${host}:${port}/files/${encodeURIComponent(finalFile.fileName)}`,
+        url: `${publicBaseUrl || `http://${host}:${port}`}/files/${encodeURIComponent(finalFile.fileName)}`,
         filename: finalFile.fileName,
       })
     } finally {
