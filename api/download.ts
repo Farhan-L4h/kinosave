@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 const ALLOWED_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'])
 const MAX_URL_LENGTH = 2048
-const PROVIDER_TIMEOUT_MS = 20_000
+const PROVIDER_TIMEOUT_MS = 300_000
 
 type DownloadFormat = 'video' | 'audio'
 type DownloadQuality = '144' | '240' | '360' | '480' | '720' | '1080' | '1440' | '2160' | 'max'

@@ -73,6 +73,7 @@ export default function KinoSave() {
   const [format, setFormat] = useState<Format>('video')
   const [quality, setQuality] = useState<Quality>('720')
   const [availableQualities, setAvailableQualities] = useState<Quality[]>(['360', '480', '720', '1080', '1440', '2160'])
+  const [videoTitle, setVideoTitle] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -98,8 +99,9 @@ export default function KinoSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: value }),
       })
-      const data = await response.json() as { resolutions?: unknown }
+      const data = await response.json() as { title?: unknown; resolutions?: unknown }
       if (!response.ok || !Array.isArray(data.resolutions) || data.resolutions.length === 0) return
+      if (typeof data.title === 'string') setVideoTitle(data.title)
       const next = data.resolutions
         .filter((item): item is string => typeof item === 'string')
         .filter((item): item is Quality => ['360', '480', '720', '1080', '1440', '2160'].includes(item as Quality))
@@ -192,10 +194,14 @@ export default function KinoSave() {
         throw new Error('Server tidak mengembalikan link download.')
       }
 
-      setResult({ downloadUrl: data.downloadUrl, filename: data.filename || 'kinosave-download', platform })
+      const extension = format === 'audio' ? 'mp3' : 'mp4'
+      const filename = typeof data.filename === 'string' && data.filename.trim()
+        ? data.filename
+        : `${videoTitle || 'kinosave-download'}.${extension}`
+      setResult({ downloadUrl: data.downloadUrl, filename, platform })
       setProgress(100)
       setProgressLabel('Selesai. File siap diunduh.')
-      addDebugLog(`Download siap: ${data.filename || 'kinosave-download'}.`)
+      addDebugLog(`Download siap: ${filename}.`)
       addHistory(normalizedUrl, platform, format, 'completed')
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : 'Terjadi kesalahan. Coba lagi.'
@@ -237,15 +243,15 @@ export default function KinoSave() {
           <span className="brand-mark">KS</span>
           <span>KINOSAVE</span>
         </a>
-        <span className="topbar-note">LOCAL-FIRST / VERCEL READY</span>
+        <span className="topbar-note">FARHAN-L4h</span>
       </header>
 
       <main className="page-content">
         <section className="hero-section">
           <div className="hero-copy">
             <p className="eyebrow">MEDIA LINK TOOL</p>
-            <h1>Download tanpa muter-muter.</h1>
-            <p className="hero-description">Satu tempat untuk memproses link YouTube.</p>
+            <h1>Buat Download Vidio/Music Ya Cuy.</h1>
+            <p className="hero-description">Malas untuk Ribet.</p>
             <button className="primary-button hero-button" onClick={() => setIsModalOpen(true)}>PASTE LINK <span aria-hidden="true">↗</span></button>
           </div>
           <div className="hero-stamp" aria-hidden="true">
