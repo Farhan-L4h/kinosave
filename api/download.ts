@@ -2,15 +2,18 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 const ALLOWED_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'])
 const MAX_URL_LENGTH = 2048
-const PROVIDER_TIMEOUT_MS = 300_000
+const PROVIDER_TIMEOUT_MS = 500_000
 
 type DownloadFormat = 'video' | 'audio'
 type DownloadQuality = '144' | '240' | '360' | '480' | '720' | '1080' | '1440' | '2160' | 'max'
+type DownloadFps = 24 | 25 | 30 | 48 | 50 | 60
+const ALLOWED_FPS: DownloadFps[] = [24, 25, 30, 48, 50, 60]
 const ALLOWED_QUALITIES: DownloadQuality[] = ['144', '240', '360', '480', '720', '1080', '1440', '2160', 'max']
 
 interface DownloadRequest {
   url?: unknown
   quality?: unknown
+  fps?: unknown
   format?: unknown
 }
 
@@ -57,6 +60,11 @@ function providerErrorMessage(code?: string) {
 }
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
+  const backendLogs: string[] = []
+  const log = (message: string) => {
+    backendLogs.push(`[backend] ${message}`)
+    console.info(`[download] ${message}`)
+  }
   if (request.method !== 'POST') {
     return json(response, { error: 'Method tidak didukung.' }, 405)
   }
@@ -67,30 +75,44 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
   const body = (typeof request.body === 'object' && request.body !== null ? request.body : {}) as DownloadRequest
 
-  const url = typeof body.url === 'string' ? body.url.trim() : ''
-  if (body.format !== undefined && body.format !== 'video' && body.format !== 'audio') {
+    const url = typeof body.url === 'string' ? body.url.trim() : ''
+    const format: DownloadFormat = body.format === 'audio' ? 'audio' : 'video'
+    const quality: DownloadQuality = typeof body.quality === 'string' ? body.quality as DownloadQuality : '720'
+    const fps: DownloadFps = typeof body.fps === 'number' && ALLOWED_FPS.includes(body.fps as DownloadFps) ? body.fps as DownloadFps : 30
+
+    if (body.format !== undefined && body.format !== 'video' && body.format !== 'audio') {
     return json(response, { error: 'Format harus berupa video atau audio.' }, 400)
   }
   if (body.quality !== undefined && (typeof body.quality !== 'string' || !ALLOWED_QUALITIES.includes(body.quality as DownloadQuality))) {
     return json(response, { error: 'Resolusi tidak didukung. Pilih resolusi antara 144p dan 2160p.' }, 400)
   }
-  const format: DownloadFormat = body.format === 'audio' ? 'audio' : 'video'
-  const quality: DownloadQuality = typeof body.quality === 'string' ? body.quality as DownloadQuality : '720'
+  if (body.fps !== undefined && (typeof body.fps !== 'number' || !ALLOWED_FPS.includes(body.fps as DownloadFps))) {
+    return json(response, { error: 'FPS tidak didukung. Pilih FPS yang tersedia.' }, 400)
+  }
 
-  if (!url || url.length > MAX_URL_LENGTH || !isAllowedSource(url)) {
+    log(`Parameter: format=${format}, quality=${quality}, fps=${fps}`)
+
+    if (!url || url.length > MAX_URL_LENGTH || !isAllowedSource(url)) {
+    log('Validasi URL gagal: URL kosong, terlalu panjang, atau bukan YouTube.')
     return json(response, { error: 'URL HTTPS YouTube yang valid wajib diisi.' }, 400)
   }
 
+  log('Validasi URL berhasil.')
+
   const endpoint = providerEndpoint()
   if (!endpoint) {
+    log('Provider endpoint tidak dikonfigurasi.')
     return json(response, { error: 'Downloader belum dikonfigurasi. Tambahkan MEDIA_PROVIDER_URL di environment Vercel.' }, 503)
   }
+
+  log(`Provider endpoint: ${endpoint}`)
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS)
 
   try {
-    const providerHeaders: Record<string, string> = {
+      log('Mengirim request ke provider...')
+      const providerHeaders: Record<string, string> = {
       Accept: 'application/json',
       'Content-Type': 'application/json',
     }
@@ -103,6 +125,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       body: JSON.stringify({
         url,
         videoQuality: quality,
+        fps,
         downloadMode: format === 'audio' ? 'audio' : 'auto',
         audioFormat: 'mp3',
         filenameStyle: 'basic',
@@ -112,38 +135,53 @@ export default async function handler(request: VercelRequest, response: VercelRe
     })
     const providerData = await providerResponse.json() as ProviderResponse
 
-    if (!providerResponse.ok || providerData.status === 'error') {
+        log(`Response provider: status=${providerResponse.status}, status=${providerData.status}`)
+
+        if (!providerResponse.ok || providerData.status === 'error') {
       return json(response, { error: providerErrorMessage(providerData.error?.code) }, 502)
     }
     if (providerData.status === 'picker') {
-      const firstItem = providerData.picker?.find((item) => item.url)
-      if (!firstItem?.url) return json(response, { error: 'Provider tidak mengembalikan media yang dapat diunduh.' }, 502)
-      return json(response, {
-        downloadUrl: firstItem.url,
-        filename: `kinosave.${firstItem.type === 'audio' ? 'mp3' : 'mp4'}`,
-      })
-    }
-    if (providerData.status === 'local-processing') {
-      return json(response, { error: 'Provider meminta pemrosesan lokal yang belum didukung oleh KinoSave.' }, 502)
-    }
-    if (providerData.status !== 'redirect' && providerData.status !== 'tunnel') {
-      return json(response, { error: 'Provider mengembalikan status yang belum didukung.' }, 502)
-    }
-    if (!providerData.url) {
-      return json(response, { error: 'Provider tidak mengembalikan URL download.' }, 502)
-    }
+          log('Provider mengembalikan picker. Mengambil item pertama.')
+          const firstItem = providerData.picker?.find((item) => item.url)
+          if (!firstItem?.url) {
+            log('Picker kosong: tidak ada item yang dapat diunduh.')
+            return json(response, { error: 'Provider tidak mengembalikan media yang dapat diunduh.' }, 502)
+          }
+          log(`Picker item: type=${firstItem.type}, url=${firstItem.url?.substring(0, 50)}...`)
+          return json(response, {
+            downloadUrl: firstItem.url,
+            filename: `kinosave.${firstItem.type === 'audio' ? 'mp3' : 'mp4'}`,
+            logs: backendLogs,
+          })
+        }
+        if (providerData.status === 'local-processing') {
+          log('Provider meminta pemrosesan lokal.')
+          return json(response, { error: 'Provider meminta pemrosesan lokal yang belum didukung oleh KinoSave.', logs: backendLogs }, 502)
+        }
+        if (providerData.status !== 'redirect' && providerData.status !== 'tunnel') {
+          log(`Status provider tidak didukung: ${providerData.status}`)
+          return json(response, { error: 'Provider mengembalikan status yang belum didukung.', logs: backendLogs }, 502)
+        }
+        log(`Status provider: ${providerData.status}`)
+        if (!providerData.url) {
+          log('Provider tidak mengembalikan URL download.')
+          return json(response, { error: 'Provider tidak mengembalikan URL download.', logs: backendLogs }, 502)
+        }
 
-    return json(response, {
-      downloadUrl: providerData.url,
-      filename: providerData.filename || `kinosave.${format === 'audio' ? 'mp3' : 'mp4'}`,
-    })
+        log(`Download URL: ${providerData.url?.substring(0, 50)}...`)
+        return json(response, {
+          downloadUrl: providerData.url,
+          filename: providerData.filename || `kinosave.${format === 'audio' ? 'mp3' : 'mp4'}`,
+          logs: backendLogs,
+        })
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return json(response, { error: 'Provider terlalu lama merespons. Coba lagi.' }, 504)
-    }
-    const reason = error instanceof Error ? error.message : ''
-    console.error('media provider request failed', error)
-    return json(response, {
+      log(`Request gagal: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      if (error instanceof Error && error.name === 'AbortError') {
+        return json(response, { error: 'Provider terlalu lama merespons. Coba lagi.' }, 504)
+      }
+      const reason = error instanceof Error ? error.message : ''
+      console.error('media provider request failed', error)
+      return json(response, {
       error: reason.includes('ECONNREFUSED') || reason.includes('fetch failed')
         ? 'Server downloader lokal tidak dapat dihubungi. Jalankan Cobalt atau service yt-dlp, lalu periksa MEDIA_PROVIDER_URL.'
         : 'Layanan download sedang tidak tersedia.',

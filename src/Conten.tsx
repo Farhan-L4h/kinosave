@@ -22,6 +22,7 @@ interface DownloadResult {
   downloadUrl: string
   filename: string
   platform: Platform
+  logs?: string[]
 }
 
 interface DebugLog {
@@ -79,7 +80,7 @@ export default function KinoSave() {
   const [url, setUrl] = useState('')
   const [format, setFormat] = useState<Format>('video')
   const [quality, setQuality] = useState<Quality>('1080')
-  const [fps, setFps] = useState<Fps>(60)
+  const [fps, setFps] = useState<Fps>(30)
   const [availableQualities, setAvailableQualities] = useState<Quality[]>([])
   const [availableFps, setAvailableFps] = useState<Fps[]>([])
   const [isInfoLoading, setIsInfoLoading] = useState(false)
@@ -94,6 +95,7 @@ export default function KinoSave() {
   const [notice, setNotice] = useState('')
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([])
   const [isLogOpen, setIsLogOpen] = useState(false)
+    const [backendLogs, setBackendLogs] = useState<string[]>([])
   const [progress, setProgress] = useState(0)
   const [progressLabel, setProgressLabel] = useState('')
 
@@ -180,6 +182,10 @@ export default function KinoSave() {
     }])
   }
 
+    function addBackendLog(message: string) {
+      setBackendLogs((current) => [...current.slice(-19), message])
+    }
+
   function addHistory(value: string, platform: Platform, selectedFormat: Format, status: HistoryEntry['status']) {
     const next: HistoryEntry = {
       id: crypto.randomUUID(),
@@ -247,6 +253,7 @@ export default function KinoSave() {
       window.clearInterval(progressTimer)
       const responseMessage = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`
       addDebugLog(`Response backend: HTTP ${response.status}; status=${response.ok ? 'OK' : 'GAGAL'}${data.error ? `; pesan="${responseMessage}"` : '; payload diterima'}`)
+      if (Array.isArray(data.logs)) data.logs.forEach((entry: unknown) => { if (typeof entry === 'string') addBackendLog(entry) })
       if (!response.ok) throw new Error(data.error || 'Layanan download belum tersedia.')
       if (!data.downloadUrl) {
         addDebugLog(`Response gagal: downloadUrl tidak ada; keys=${Object.keys(data).join(', ') || 'kosong'}.`)
@@ -407,15 +414,27 @@ export default function KinoSave() {
               </button>
               {isLogOpen && (
                 <div className="debug-log-box" role="log" aria-live="polite">
-                  {debugLogs.length === 0 ? (
+                              {debugLogs.length === 0 && backendLogs.length === 0 ? (
                     <p>Belum ada aktivitas.</p>
                   ) : (
-                    debugLogs.map((entry) => <p key={entry.id}><time>{entry.time}</time> {entry.message}</p>)
-                  )}
-                  {debugLogs.length > 0 && <button className="debug-log-clear" type="button" onClick={() => setDebugLogs([])}>CLEAR LOG</button>}
-                </div>
-              )}
-            </section>
+                                <>
+                                  <div className="debug-log-section">
+                                    <h4>Frontend Logs</h4>
+                                    {debugLogs.length === 0 ? <p className="empty-log">Tidak ada log.</p> : debugLogs.map((entry) => <p key={entry.id}><time>{entry.time}</time> {entry.message}</p>)}
+                                    {debugLogs.length > 0 && <button className="debug-log-clear" type="button" onClick={() => setDebugLogs([])}>CLEAR FRONTEND LOGS</button>}
+                                  </div>
+                                  {backendLogs.length > 0 && (
+                                    <div className="debug-log-section">
+                                      <h4>Backend Logs</h4>
+                                      {backendLogs.map((entry, index) => <p key={index} className="backend-log">{entry}</p>)}
+                                      <button className="debug-log-clear" type="button" onClick={() => setBackendLogs([])}>CLEAR BACKEND LOGS</button>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </section>
             <p className="legal-note">Gunakan hanya untuk konten yang kamu miliki atau diizinkan untuk disimpan.</p>
           </div>
 

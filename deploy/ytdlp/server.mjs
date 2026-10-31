@@ -104,6 +104,7 @@ async function runDownload(url, quality, fps, format, outputTemplate, outputPath
     args.push('--extract-audio', '--audio-format', 'mp3', '--audio-quality', '128K')
   } else {
     args.push('--format', `bestvideo[height<=${quality}][fps<=${fps}]+bestaudio/best[height<=${quality}][fps<=${fps}]`, '--merge-output-format', 'mp4')
+    args.push('--postprocessor-args', `VideoConvertor:-r ${fps}`)
   }
   args.push(url)
   const commandOutput = await runCommand('yt-dlp', args)
@@ -118,6 +119,7 @@ async function runDownload(url, quality, fps, format, outputTemplate, outputPath
     '-y',
     '-i', join(downloadDir, sourceName),
     '-c:v', 'libx264',
+    '-r', String(fps),
     '-preset', 'veryfast',
     '-crf', '23',
     '-c:a', 'aac',
@@ -180,7 +182,7 @@ const server = createServer(async (request, response) => {
     const requestedQuality = body.quality ?? body.videoQuality
     const quality = typeof requestedQuality === 'string' && qualities.has(requestedQuality) ? requestedQuality : '720'
     const requestedFps = Number(body.fps)
-    const fps = [24, 25, 30, 48, 50, 60].includes(requestedFps) ? requestedFps : 60
+    const fps = [24, 25, 30, 48, 50, 60].includes(requestedFps) ? requestedFps : 30
     if (!isYouTubeUrl(url)) return send(response, 400, { error: 'URL HTTPS YouTube yang valid wajib diisi.' })
     if (activeJobs.size >= maxConcurrent) return send(response, 429, { error: 'Server lokal sedang sibuk. Coba lagi.' })
     const id = randomUUID()
