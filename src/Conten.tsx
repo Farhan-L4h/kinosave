@@ -7,6 +7,7 @@ const MAX_HISTORY = 20
 type Platform = 'youtube' | 'tiktok' | 'instagram'
 type Format = 'video' | 'audio'
 type Quality = '360' | '480' | '720' | '1080' | '1440' | '2160'
+type Fps = 24 | 25 | 30 | 48 | 50 | 60
 
 interface HistoryEntry {
   id: string
@@ -78,13 +79,16 @@ export default function KinoSave() {
   const [url, setUrl] = useState('')
   const [format, setFormat] = useState<Format>('video')
   const [quality, setQuality] = useState<Quality>('1080')
+  const [fps, setFps] = useState<Fps>(60)
   const [availableQualities, setAvailableQualities] = useState<Quality[]>([])
+  const [availableFps, setAvailableFps] = useState<Fps[]>([])
   const [isInfoLoading, setIsInfoLoading] = useState(false)
   const [infoProgress, setInfoProgress] = useState(12)
   const [videoTitle, setVideoTitle] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [cancelController, setCancelController] = useState<AbortController | null>(null)
   const [error, setError] = useState('')
   const [result, setResult] = useState<DownloadResult | null>(null)
   const [notice, setNotice] = useState('')
@@ -103,6 +107,7 @@ export default function KinoSave() {
       setIsInfoLoading(false)
       setInfoProgress(0)
       setAvailableQualities([])
+      setAvailableFps([])
       return
     }
     if (detectPlatform(value) !== 'youtube') {
@@ -133,14 +138,19 @@ export default function KinoSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: value }),
       })
-      const data = await response.json() as { title?: unknown; resolutions?: unknown }
+      const data = await response.json() as { title?: unknown; resolutions?: unknown; fps?: unknown }
       if (!response.ok || !Array.isArray(data.resolutions) || data.resolutions.length === 0) return
       if (typeof data.title === 'string') setVideoTitle(data.title)
       const next = data.resolutions
         .filter((item): item is string => typeof item === 'string')
         .filter((item): item is Quality => ['360', '480', '720', '1080', '1440', '2160'].includes(item as Quality))
+      const nextFps = Array.isArray(data.fps)
+        ? data.fps.filter((item): item is Fps => [24, 25, 30, 48, 50, 60].includes(item as Fps))
+        : []
       if (next.length > 0) {
         setAvailableQualities(next)
+        setAvailableFps(nextFps)
+        if (nextFps.length > 0 && !nextFps.includes(fps)) setFps(nextFps[nextFps.length - 1])
         setInfoProgress(100)
         if (!next.includes(quality)) setQuality(next[next.length - 1])
         addDebugLog(`Metadata berhasil: judul="${typeof data.title === 'string' ? data.title : 'tanpa judul'}"; resolusi=${next.map((item) => `${item}p`).join(', ')}.`)
@@ -214,6 +224,8 @@ export default function KinoSave() {
     addHistory(normalizedUrl, platform, format, 'pending')
 
     let progressTimer: number | undefined
+    const controller = new AbortController()
+    setCancelController(controller)
     try {
       progressTimer = window.setInterval(() => {
         setProgress((current) => {
@@ -228,7 +240,8 @@ export default function KinoSave() {
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: normalizedUrl, quality, format }),
+        body: JSON.stringify({ url: normalizedUrl, quality, fps, format }),
+        signal: controller.signal,
       })
       const data = await response.json().catch(() => ({}))
       window.clearInterval(progressTimer)
@@ -250,11 +263,14 @@ export default function KinoSave() {
       addDebugLog(`Download siap: ${filename}.`)
       addHistory(normalizedUrl, platform, format, 'completed')
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : 'Terjadi kesalahan. Coba lagi.'
+      const message = requestError instanceof DOMException && requestError.name === 'AbortError'
+        ? 'Download dibatalkan.'
+        : requestError instanceof Error ? requestError.message : 'Terjadi kesalahan. Coba lagi.'
       addDebugLog(`Request gagal: ${message}`)
       setError(message)
     } finally {
       if (progressTimer !== undefined) window.clearInterval(progressTimer)
+      setCancelController(null)
       setIsLoading(false)
     }
   }
@@ -326,7 +342,8 @@ export default function KinoSave() {
                   placeholder="https://..."
                   autoComplete="off"
                 />
-                <button type="button" className="paste-button" onClick={pasteFromClipboard}>PASTE</button>
+                {url && <button type="button" className="paste-button" onClick={() => { setUrl(''); resetFeedback() }}>CLEAR</button>}
+                {!url && <button type="button" className="paste-button" onClick={pasteFromClipboard}>PASTE</button>}
               </div>
               <div className="form-row">
                 <div className="format-control">
@@ -343,13 +360,20 @@ export default function KinoSave() {
                     {availableQualities.map((item) => <option key={item} value={item}>{item}P</option>)}
                   </select>
                 </div>
+                <div className="format-control">
+                  <label htmlFor="fps">FPS</label>
+                  <select id="fps" value={fps} onChange={(event) => { setFps(Number(event.target.value) as Fps); resetFeedback() }} disabled={format === 'audio' || isInfoLoading || availableFps.length === 0}>
+                    {availableFps.length === 0 && <option value="">{isInfoLoading ? 'LOADING...' : 'ENTER YOUTUBE URL'}</option>}
+                    {availableFps.map((item) => <option key={item} value={item}>{item} FPS</option>)}
+                  </select>
+                </div>
                 <div className="platform-detected">
                   <span>Platform</span>
                   <strong>{detectedPlatform ? PLATFORM_LABELS[detectedPlatform] : 'WAITING...'}</strong>
                 </div>
               </div>
-              <button className="primary-button submit-button" type="submit" disabled={isLoading || isInfoLoading || (Boolean(url.trim()) && detectedPlatform === 'youtube' && availableQualities.length === 0)}>
-                {isLoading ? <><span>PROCESSING... {progress}%</span><span className="button-progress-track" aria-hidden="true"><span className="button-progress-fill" style={{ width: `${progress}%` }} /></span></> : isInfoLoading ? <><span className="button-loader" aria-hidden="true" /> LOADING MEDIA...</> : 'PROCESS LINK'} {!isLoading && <span aria-hidden="true">↗</span>}
+              <button className="primary-button submit-button" type={isLoading ? 'button' : 'submit'} onClick={isLoading ? () => cancelController?.abort() : undefined} disabled={isInfoLoading || (!isLoading && Boolean(url.trim()) && detectedPlatform === 'youtube' && availableQualities.length === 0)}>
+                {isLoading ? 'CANCEL DOWNLOAD' : isInfoLoading ? <><span className="button-loader" aria-hidden="true" /> LOADING MEDIA...</> : 'PROCESS LINK'} {!isLoading && <span aria-hidden="true">↗</span>}
               </button>
               {isInfoLoading && (
                 <div className="progress-area" role="status" aria-live="polite">

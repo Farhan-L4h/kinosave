@@ -91,7 +91,7 @@ function availableFilePath(title, extension) {
   return { fileName: candidate, filePath: join(downloadDir, candidate) }
 }
 
-async function runDownload(url, quality, format, outputTemplate, outputPath, id) {
+async function runDownload(url, quality, fps, format, outputTemplate, outputPath, id) {
   const args = [
     '--no-playlist',
     '--match-filter', 'duration <= 1800',
@@ -103,7 +103,7 @@ async function runDownload(url, quality, format, outputTemplate, outputPath, id)
   if (format === 'audio') {
     args.push('--extract-audio', '--audio-format', 'mp3', '--audio-quality', '128K')
   } else {
-    args.push('--format', `bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]`, '--merge-output-format', 'mp4')
+    args.push('--format', `bestvideo[height<=${quality}][fps<=${fps}]+bestaudio/best[height<=${quality}][fps<=${fps}]`, '--merge-output-format', 'mp4')
   }
   args.push(url)
   const commandOutput = await runCommand('yt-dlp', args)
@@ -112,7 +112,7 @@ async function runDownload(url, quality, format, outputTemplate, outputPath, id)
   if (!sourceName) throw new Error('File video dari yt-dlp tidak ditemukan.')
   if (format === 'audio') {
     await new Promise((resolve, reject) => rename(join(downloadDir, sourceName), outputPath, (error) => error ? reject(error) : resolve()))
-    return title
+    return { title, fps: null }
   }
   await runCommand('ffmpeg', [
     '-y',
@@ -126,7 +126,9 @@ async function runDownload(url, quality, format, outputTemplate, outputPath, id)
     outputPath,
   ])
   unlink(join(downloadDir, sourceName), () => {})
-  return title
+  const fpsOutput = await runCommand('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate', '-of', 'default=noprint_wrappers=1:nokey=1', outputPath])
+  const fpsValue = Number(fpsOutput.trim().split('/')[0]) / Number(fpsOutput.trim().split('/')[1] || 1)
+  return { title, fps: Number.isFinite(fpsValue) ? Math.round(fpsValue) : fps }
 }
 
 const server = createServer(async (request, response) => {
@@ -158,7 +160,12 @@ const server = createServer(async (request, response) => {
         .map((item) => String(item.height))
         .filter((height) => qualities.has(height)))]
         .sort((a, b) => Number(a) - Number(b))
-      return send(response, 200, { title: safeFileTitle(info.title || ''), resolutions })
+      const fps = [...new Set((info.formats || [])
+        .filter((item) => item.vcodec && item.vcodec !== 'none' && item.fps)
+        .map((item) => Math.round(Number(item.fps))))]
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => a - b)
+      return send(response, 200, { title: safeFileTitle(info.title || ''), resolutions, fps })
     } catch (error) {
       console.error('local yt-dlp info failed', error)
       return send(response, 502, { error: 'Metadata YouTube tidak dapat diambil.' })
@@ -172,6 +179,8 @@ const server = createServer(async (request, response) => {
     const format = body.format === 'audio' || body.downloadMode === 'audio' ? 'audio' : 'video'
     const requestedQuality = body.quality ?? body.videoQuality
     const quality = typeof requestedQuality === 'string' && qualities.has(requestedQuality) ? requestedQuality : '720'
+    const requestedFps = Number(body.fps)
+    const fps = [24, 25, 30, 48, 50, 60].includes(requestedFps) ? requestedFps : 60
     if (!isYouTubeUrl(url)) return send(response, 400, { error: 'URL HTTPS YouTube yang valid wajib diisi.' })
     if (activeJobs.size >= maxConcurrent) return send(response, 429, { error: 'Server lokal sedang sibuk. Coba lagi.' })
     const id = randomUUID()
@@ -180,7 +189,8 @@ const server = createServer(async (request, response) => {
     const outputPath = join(downloadDir, `${id}.${extension}`)
     activeJobs.add(id)
     try {
-      const title = await runDownload(url, quality, format, outputTemplate, outputPath, id)
+      const result = await runDownload(url, quality, fps, format, outputTemplate, outputPath, id)
+      const title = `${result.title} - ${quality}p${result.fps ? ` ${result.fps}fps` : ''}`
       if (!existsSync(outputPath)) throw new Error('File hasil download tidak ditemukan.')
       const finalFile = availableFilePath(title, extension)
       await new Promise((resolve, reject) => rename(outputPath, finalFile.filePath, (error) => error ? reject(error) : resolve()))
