@@ -58,6 +58,23 @@ from the project root:
 npm run start:server
 ```
 
+To make the launcher available from any folder on Windows, run this once from
+the project root:
+
+```powershell
+npm link
+```
+
+After that, start the downloader and tunnel from anywhere with:
+
+```powershell
+kinosave start
+```
+
+The global command only launches the local downloader and tunnel. The project
+folder, API key, tunnel credentials, `yt-dlp`, and `ffmpeg` must still exist on
+the same computer.
+
 This opens two PowerShell windows:
 
 1. the `yt-dlp + ffmpeg` downloader on port 9001;
