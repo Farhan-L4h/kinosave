@@ -101,7 +101,7 @@ select:disabled { color: #777; opacity: .7; }
 .empty-icon { color: var(--acid); font-size: 36px; font-weight: 300; }
 .empty-history p { margin: 12px 0 6px; font-weight: 900; }
 .empty-history small { color: var(--muted); }
-.history-list { display: grid; gap: 10px; max-height: 330px; overflow-y: auto; }
+.history-list { display: grid; gap: 10px; }
 .history-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 11px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--paper); text-align: left; }
 .platform-mark { display: grid; place-items: center; width: 31px; height: 31px; border: 2px solid var(--paper); color: var(--paper); font-size: 9px; font-weight: 900; }
 .platform-mark.youtube { background: #df3b32; }.platform-mark.tiktok { background: #4a4a4a; }.platform-mark.instagram { background: #b45c8e; }

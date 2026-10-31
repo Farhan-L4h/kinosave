@@ -12,6 +12,7 @@ type Fps = 24 | 25 | 30 | 48 | 50 | 60
 interface HistoryEntry {
   id: string
   url: string
+  title?: string
   platform: Platform
   format: Format
   createdAt: string
@@ -188,10 +189,11 @@ export default function KinoSave() {
       setBackendLogs((current) => [...current.slice(-19), message])
     }
 
-  function addHistory(value: string, platform: Platform, selectedFormat: Format, status: HistoryEntry['status']) {
+  function addHistory(value: string, platform: Platform, selectedFormat: Format, status: HistoryEntry['status'], title?: string) {
     const next: HistoryEntry = {
       id: crypto.randomUUID(),
       url: value,
+      title,
       platform,
       format: selectedFormat,
       createdAt: new Date().toISOString(),
@@ -229,7 +231,7 @@ export default function KinoSave() {
     setProgressLabel('Menghubungi server downloader...')
     addDebugLog(`Memulai request: format=${format.toUpperCase()}, kualitas=${quality}p, URL=${normalizedUrl}`)
     addDebugLog('Validasi lolos: host YouTube dan kualitas media tersedia.')
-    addHistory(normalizedUrl, platform, format, 'pending')
+    addHistory(normalizedUrl, platform, format, 'pending', videoTitle || undefined)
 
     let progressTimer: number | undefined
     const controller = new AbortController()
@@ -270,7 +272,7 @@ export default function KinoSave() {
       setProgress(100)
       setProgressLabel('Selesai. File siap diunduh.')
       addDebugLog(`Download siap: ${filename}.`)
-      addHistory(normalizedUrl, platform, format, 'completed')
+      addHistory(normalizedUrl, platform, format, 'completed', videoTitle || undefined)
     } catch (requestError) {
       const message = requestError instanceof DOMException && requestError.name === 'AbortError'
         ? 'Download dibatalkan.'
@@ -462,7 +464,7 @@ export default function KinoSave() {
                       <span className={`platform-mark ${entry.platform}`}>{platformMark(entry.platform)}</span>
                       <span className="history-info">
                         <strong>{PLATFORM_LABELS[entry.platform]} / {entry.format.toUpperCase()}</strong>
-                        <small>{entry.url}</small>
+                        <small>{entry.title || entry.url}</small>
                       </span>
                       <span className="history-date">{formatDate(entry.createdAt)}</span>
                     </button>
