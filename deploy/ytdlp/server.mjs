@@ -236,7 +236,7 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request)
       const url = typeof body.url === 'string' ? body.url.trim() : ''
       if (!isYouTubeUrl(url)) return send(response, 400, { error: 'URL HTTPS YouTube yang valid wajib diisi.' })
-      const raw = await runCommand('yt-dlp', ['--js-runtimes', 'node', '--dump-single-json', '--skip-download', '--no-playlist', url])
+      const raw = await runYtDlp(['--js-runtimes', 'node', '--dump-single-json', '--skip-download', '--no-playlist', url])
       const info = JSON.parse(raw)
       const resolutions = [...new Set((info.formats || [])
         .filter((item) => item.vcodec && item.vcodec !== 'none' && item.height)
@@ -250,7 +250,7 @@ const server = createServer(async (request, response) => {
         .sort((a, b) => a - b)
       return send(response, 200, { title: safeFileTitle(info.title || ''), resolutions, fps })
     } catch (error) {
-      logLine('local yt-dlp info failed', true)
+      logLine(`local yt-dlp info failed: ${error instanceof Error ? error.message : String(error)}`, true)
       return send(response, 502, { error: 'Metadata YouTube tidak dapat diambil.' })
     }
   }

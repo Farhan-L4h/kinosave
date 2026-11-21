@@ -10,6 +10,22 @@ const path = require('node:path')
 const REQUIRED_BINARIES = ['yt-dlp', 'ffmpeg', 'cloudflared']
 const SERVER_READY_TIMEOUT_MS = 30_000
 const TUNNEL_READY_TIMEOUT_MS = 45_000
+const BINARY_FALLBACK_PATHS = {
+  'yt-dlp': [
+    'C:\\ProgramData\\chocolatey\\bin\\yt-dlp.exe',
+    'C:\\ffmpeg\\bin\\yt-dlp.exe',
+    'C:\\Program Files\\yt-dlp\\yt-dlp.exe',
+  ],
+  ffmpeg: [
+    'C:\\ProgramData\\chocolatey\\bin\\ffmpeg.exe',
+    'C:\\ffmpeg\\bin\\ffmpeg.exe',
+    'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
+  ],
+  cloudflared: [
+    'C:\\Program Files (x86)\\cloudflared\\cloudflared.exe',
+    'C:\\Program Files\\cloudflared\\cloudflared.exe',
+  ],
+}
 
 function which(command) {
   const result = spawnSync('where.exe', [command], { encoding: 'utf8', windowsHide: true })
@@ -18,25 +34,48 @@ function which(command) {
   return line || null
 }
 
-function readApiKey(projectRoot, env) {
+function resolveBinary(command) {
+  const found = which(command)
+  if (found) return found
+  for (const candidate of BINARY_FALLBACK_PATHS[command] || []) {
+    if (fs.existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+function readKeyFromEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return null
+  for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    const match = /^MEDIA_PROVIDER_API_KEY=(.*)$/.exec(line.trim())
+    if (!match) continue
+    const value = match[1].trim().replace(/^["']|["']$/g, '')
+    if (value) return value
+  }
+  return null
+}
+
+function readApiKey({ env, resourceRoot, workDir, config }) {
   const inline = env.KINOSAVE_API_KEY?.trim()
   if (inline) return inline
 
-  const keyFile = path.join(os.tmpdir(), 'kinosave-provider-key.txt')
-  if (fs.existsSync(keyFile)) {
-    const value = fs.readFileSync(keyFile, 'utf8').trim()
-    if (value) return value
-  }
+  const candidates = [
+    path.join(workDir, 'provider-key.txt'),
+    path.join(os.tmpdir(), 'kinosave-provider-key.txt'),
+    path.join(resourceRoot, '.env.production.local'),
+    path.join(resourceRoot, '.env.local'),
+    ...(config.apiKeyEnvFiles || []),
+  ]
 
-  for (const name of ['.env.production.local', '.env.local']) {
-    const envFile = path.join(projectRoot, name)
-    if (!fs.existsSync(envFile)) continue
-    for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
-      const match = /^MEDIA_PROVIDER_API_KEY=(.*)$/.exec(line.trim())
-      if (!match) continue
-      const value = match[1].trim().replace(/^["']|["']$/g, '')
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    if (candidate.endsWith('.txt')) {
+      if (!fs.existsSync(candidate)) continue
+      const value = fs.readFileSync(candidate, 'utf8').trim()
       if (value) return value
+      continue
     }
+    const value = readKeyFromEnvFile(candidate)
+    if (value) return value
   }
 
   return null
@@ -135,13 +174,15 @@ async function waitForTunnel(child, output) {
 }
 
 class ServiceManager {
-  constructor({ projectRoot, config, log, onStatus }) {
-    this.projectRoot = projectRoot
+  constructor({ resourceRoot, workDir, config, log, onStatus }) {
+    this.resourceRoot = resourceRoot
+    this.workDir = workDir
     this.config = config
     this.log = log || (() => {})
     this.onStatus = onStatus || (() => {})
     this.server = null
     this.tunnel = null
+    this.lastExit = null
     this.status = { server: 'stopped', tunnel: 'stopped', error: null }
     this.emit()
   }
@@ -156,15 +197,20 @@ class ServiceManager {
   }
 
   capture(child, label, part) {
+    const stderrTail = []
     const push = (chunk) => {
       for (const line of chunk.toString().split(/\r?\n/)) {
-        if (line.trim()) this.log(`${label}: ${line.trim()}`)
+        if (!line.trim()) continue
+        this.log(`${label}: ${line.trim()}`)
+        stderrTail.push(line.trim())
+        if (stderrTail.length > 6) stderrTail.shift()
       }
     }
     child.stdout?.on('data', push)
     child.stderr?.on('data', push)
     child.on('exit', (code) => {
       this.log(`${label}: proses berhenti (kode ${code})`)
+      this.lastExit = { part, code, detail: stderrTail.join(' | ') }
       if (this.status[part] !== 'stopped') {
         this.setStatus(part, 'error', `${label} berhenti sendiri (kode ${code}).`)
       }
@@ -172,10 +218,19 @@ class ServiceManager {
   }
 
   missingBinaries() {
-    return REQUIRED_BINARIES.filter((binary) => !which(binary))
+    return REQUIRED_BINARIES.filter((binary) => !resolveBinary(binary))
   }
 
   async start() {
+    if (this.server || this.tunnel) return this.status
+    if (this.startPromise) return this.startPromise
+    this.startPromise = this.startServices().finally(() => {
+      this.startPromise = null
+    })
+    return this.startPromise
+  }
+
+  async startServices() {
     if (this.server || this.tunnel) return this.status
 
     const missing = this.missingBinaries()
@@ -185,8 +240,14 @@ class ServiceManager {
       throw new Error(message)
     }
 
-    const apiKey = readApiKey(this.projectRoot, process.env)
-    if (!apiKey) {
+    const apiKey = readApiKey({
+      env: process.env,
+      resourceRoot: this.resourceRoot,
+      workDir: this.workDir,
+      config: this.config,
+    })
+    const keyHashes = (this.config.apiKeyHashes || []).filter(Boolean)
+    if (!apiKey && !keyHashes.length) {
       const message = 'API key tidak ditemukan. Isi MEDIA_PROVIDER_API_KEY di .env.local atau set KINOSAVE_API_KEY.'
       this.setStatus('server', 'error', message)
       throw new Error(message)
@@ -198,7 +259,7 @@ class ServiceManager {
       throw new Error(message)
     }
 
-    const serverPath = path.join(this.projectRoot, 'deploy', 'ytdlp', 'server.mjs')
+    const serverPath = path.join(this.resourceRoot, 'deploy', 'ytdlp', 'server.mjs')
     if (!fs.existsSync(serverPath)) {
       const message = `Server downloader tidak ditemukan: ${serverPath}`
       this.setStatus('server', 'error', message)
@@ -208,11 +269,18 @@ class ServiceManager {
     this.setStatus('server', 'starting')
     this.setStatus('tunnel', 'starting')
 
-    const logDir = path.join(this.projectRoot, 'logs')
+    if (await probeServer(this.config.servicePort)) {
+      const message = `Port ${this.config.servicePort} sudah dipakai proses lain. Tutup KinoSave yang lain, lalu coba lagi.`
+      this.setStatus('server', 'error', message)
+      throw new Error(message)
+    }
+
+    const logDir = path.join(this.workDir, 'logs')
     fs.mkdirSync(logDir, { recursive: true })
+    fs.mkdirSync(path.join(this.workDir, 'downloads'), { recursive: true })
 
     this.server = spawn(process.execPath, [serverPath], {
-      cwd: this.projectRoot,
+      cwd: this.workDir,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -221,8 +289,8 @@ class ServiceManager {
         PORT: String(this.config.servicePort),
         HOST: '127.0.0.1',
         PUBLIC_BASE_URL: `https://${this.config.hostname}`,
-        LOCAL_DOWNLOAD_API_KEY: apiKey,
-        LOCAL_DOWNLOAD_API_KEY_HASHES: (this.config.apiKeyHashes || []).join(','),
+        LOCAL_DOWNLOAD_API_KEY: apiKey || '',
+        LOCAL_DOWNLOAD_API_KEY_HASHES: keyHashes.join(','),
         LOG_FILE: path.join(logDir, 'server.log'),
       },
     })
@@ -231,7 +299,15 @@ class ServiceManager {
     const serverReady = await waitForServer(this.config.servicePort, this.server)
     if (!serverReady) {
       this.stop()
-      const message = 'Server downloader gagal start dalam 30 detik.'
+      const detail = this.lastExit?.detail ? ` (${this.lastExit.detail})` : ''
+      const message = `Server downloader gagal start dalam 30 detik.${detail}`
+      this.setStatus('server', 'error', message)
+      throw new Error(message)
+    }
+    if (this.server.exitCode !== null) {
+      const detail = this.lastExit?.detail ? ` (${this.lastExit.detail})` : ''
+      this.stop()
+      const message = `Server downloader langsung berhenti.${detail}`
       this.setStatus('server', 'error', message)
       throw new Error(message)
     }
@@ -244,8 +320,8 @@ class ServiceManager {
     }
     const tunnelConfigPath = writeTunnelConfig(this.config)
     const tunnelOutput = []
-    this.tunnel = spawn(which('cloudflared'), ['tunnel', '--config', tunnelConfigPath, 'run', this.config.tunnelName], {
-      cwd: this.projectRoot,
+    this.tunnel = spawn(resolveBinary('cloudflared'), ['tunnel', '--config', tunnelConfigPath, 'run', this.config.tunnelName], {
+      cwd: this.workDir,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -301,4 +377,4 @@ class ServiceManager {
   }
 }
 
-module.exports = { ServiceManager, readApiKey, which }
+module.exports = { ServiceManager, readApiKey, resolveBinary, which }

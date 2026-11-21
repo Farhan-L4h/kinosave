@@ -1,6 +1,7 @@
 {
   "name": "kinosave-desktop",
   "private": true,
+  "productName": "KinoSave",
   "version": "0.1.0",
   "description": "KinoSave launcher - runs the local downloader and Cloudflare Tunnel only while the app is open",
   "main": "main.cjs",
@@ -22,6 +23,16 @@
       "renderer/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "../kinosave.config.json",
+        "to": "app/kinosave.config.json"
+      },
+      {
+        "from": "../deploy/ytdlp/server.mjs",
+        "to": "app/deploy/ytdlp/server.mjs"
+      }
+    ],
     "win": {
       "target": [
         "nsis"
@@ -29,7 +40,10 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "KinoSave"
     }
   }
 }

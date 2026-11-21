@@ -5,7 +5,9 @@
   "servicePort": 9001,
   "websiteUrl": "https://kinosave.han06.web.id",
   "manageTunnel": true,
-  "apiKeyHashes": [
-    "642dce3268b05ca1f167427a261288329a60555cb7ec57c5e576074843d18ea2"
+  "apiKeyHashes": [],
+  "apiKeyEnvFiles": [
+    "D:\\Documents\\Project\\kinosave\\.env.production.local",
+    "D:\\Documents\\Project\\kinosave\\.env.local"
   ]
 }
