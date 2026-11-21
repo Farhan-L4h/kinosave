@@ -109,6 +109,19 @@ function runCommand(command, args) {
   })
 }
 
+async function runYtDlp(args) {
+  try {
+    return await runCommand('yt-dlp', args)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (!message.includes('403')) throw error
+    logLine('yt-dlp ditolak 403; mencoba ulang dengan player client tv_embedded.')
+    const url = args[args.length - 1]
+    const retryArgs = [...args.slice(0, -1), '--extractor-args', 'youtube:player_client=tv_embedded', url]
+    return await runCommand('yt-dlp', retryArgs)
+  }
+}
+
 function safeFileTitle(value) {
   const cleaned = value
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
@@ -146,7 +159,7 @@ async function runDownload(url, quality, fps, format, outputTemplate, outputPath
     args.push('--postprocessor-args', `VideoConvertor:-r ${fps}`)
   }
   args.push(url)
-  const commandOutput = await runCommand('yt-dlp', args)
+  const commandOutput = await runYtDlp(args)
   const title = safeFileTitle(commandOutput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).pop() || '')
   const sourceName = readdirSync(downloadDir).find((file) => file.startsWith(`${id}.source.`))
   if (!sourceName) throw new Error('File video dari yt-dlp tidak ditemukan.')
