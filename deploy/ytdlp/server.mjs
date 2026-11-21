@@ -185,9 +185,9 @@ async function processDownload({ id, url, quality, fps, format, extension, outpu
     job.filename = finalFile.fileName
     jobs.set(id, job)
   } catch (error) {
-    logLine('local yt-dlp download failed', true)
+    logLine(`local yt-dlp download failed: ${error instanceof Error ? error.message : String(error)}`, true)
     job.status = 'error'
-    job.error = 'Download lokal gagal. Pastikan yt-dlp dan ffmpeg sudah terpasang.'
+    job.error = 'Download gagal di server. YouTube bisa membatasi permintaan dari IP ini; coba lagi beberapa saat atau pakai link lain.'
     jobs.set(id, job)
   } finally {
     activeJobs.delete(id)
@@ -274,8 +274,8 @@ const server = createServer(async (request, response) => {
     void processDownload({ id, url, quality, fps, format, extension, outputTemplate, outputPath })
     return send(response, 202, { status: 'processing', jobId: id })
   } catch (error) {
-    logLine('local yt-dlp download failed', true)
-    return send(response, 502, { error: 'Download lokal gagal. Pastikan yt-dlp dan ffmpeg sudah terpasang.' })
+    logLine(`local yt-dlp download failed: ${error instanceof Error ? error.message : String(error)}`, true)
+    return send(response, 502, { error: 'Download gagal diproses. Coba lagi beberapa saat lagi.' })
   }
 })
 
