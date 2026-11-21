@@ -139,6 +139,13 @@ npm run dist
 
 Hasil installer ada di `desktop/dist`.
 
+## Alur download
+
+Provider membalas `202` dengan `jobId` lalu memproses download di background.
+Frontend polling `GET /api/status?job=<id>` sampai `done`, baru menampilkan
+tautan file. Ini wajib karena Cloudflare memutus request origin yang lebih
+dari 100 detik (HTTP 524).
+
 ## Production environment
 
 Configure these Vercel environment variables:
