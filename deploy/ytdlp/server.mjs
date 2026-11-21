@@ -1,5 +1,5 @@
-import { createReadStream, existsSync, mkdirSync, readdir, readdirSync, rename, stat, unlink } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readdir, readdirSync, rename, stat, statSync, unlink, unlinkSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -9,8 +9,15 @@ const host = process.env.HOST || '127.0.0.1'
 const publicBaseUrl = process.env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '')
 const downloadDir = join(process.cwd(), 'downloads')
 const apiKey = process.env.LOCAL_DOWNLOAD_API_KEY?.trim()
+const apiKeyHashes = new Set((process.env.LOCAL_DOWNLOAD_API_KEY_HASHES || '')
+  .split(',')
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean))
+const logFile = process.env.LOG_FILE?.trim()
 const maxConcurrent = 2
 const activeJobs = new Set()
+const jobs = new Map()
+const JOB_TTL_MS = 60 * 60 * 1000
 const allowedHosts = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'])
 const qualities = new Set(['360', '480', '720', '1080', '1440', '2160'])
 
@@ -27,7 +34,38 @@ setInterval(() => {
   })
 }, 60 * 60 * 1000).unref()
 
+setInterval(() => {
+  for (const [id, job] of jobs) {
+    if (Date.now() - job.createdAt > JOB_TTL_MS) jobs.delete(id)
+  }
+}, 10 * 60 * 1000).unref()
+
+function keyHash(value) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function logLine(message, isError = false) {
+  const line = `${new Date().toISOString()} ${message}`
+  if (isError) console.error(message)
+  else console.log(message)
+  if (!logFile) return
+  try {
+    if (existsSync(logFile) && statSync(logFile).size > 1_000_000) unlinkSync(logFile)
+    appendFileSync(logFile, `${line}\n`)
+  } catch {}
+}
+
+function isAuthorized(request) {
+  if (!apiKey && !apiKeyHashes.size) return true
+  const header = request.headers.authorization || ''
+  if (!header.startsWith('Api-Key ')) return false
+  const value = header.slice('Api-Key '.length).trim()
+  if (apiKey && value === apiKey) return true
+  return apiKeyHashes.size > 0 && apiKeyHashes.has(keyHash(value))
+}
+
 function send(response, status, body) {
+  logLine(`${response.req?.method || '?'} ${response.req?.url || '?'} -> ${status}`)
   response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
   response.end(JSON.stringify(body))
 }
@@ -94,6 +132,7 @@ function availableFilePath(title, extension) {
 async function runDownload(url, quality, fps, format, outputTemplate, outputPath, id) {
   const args = [
     '--no-playlist',
+    '--js-runtimes', 'node',
     '--match-filter', 'duration <= 1800',
     '--output', outputTemplate,
     '--no-progress',
@@ -133,6 +172,35 @@ async function runDownload(url, quality, fps, format, outputTemplate, outputPath
   return { title, fps: Number.isFinite(fpsValue) ? Math.round(fpsValue) : fps }
 }
 
+async function processDownload({ id, url, quality, fps, format, extension, outputTemplate, outputPath }) {
+  const job = jobs.get(id) || { status: 'processing', createdAt: Date.now(), url: null, filename: null, error: null }
+  try {
+    const result = await runDownload(url, quality, fps, format, outputTemplate, outputPath, id)
+    const title = `${result.title} - ${quality}p${result.fps ? ` ${result.fps}fps` : ''}`
+    if (!existsSync(outputPath)) throw new Error('File hasil download tidak ditemukan.')
+    const finalFile = availableFilePath(title, extension)
+    await new Promise((resolve, reject) => rename(outputPath, finalFile.filePath, (error) => error ? reject(error) : resolve()))
+    job.status = 'done'
+    job.url = `${publicBaseUrl || `http://${host}:${port}`}/files/${encodeURIComponent(finalFile.fileName)}`
+    job.filename = finalFile.fileName
+    jobs.set(id, job)
+  } catch (error) {
+    logLine('local yt-dlp download failed', true)
+    job.status = 'error'
+    job.error = 'Download lokal gagal. Pastikan yt-dlp dan ffmpeg sudah terpasang.'
+    jobs.set(id, job)
+  } finally {
+    activeJobs.delete(id)
+  }
+}
+
+function rejectUnauthorized(request, response) {
+  const header = request.headers.authorization || ''
+  const received = header.startsWith('Api-Key ') ? header.slice('Api-Key '.length).trim() : ''
+  logLine(`auth gagal; sha256 kunci diterima: ${received ? keyHash(received) : '(header tidak ada)'}`)
+  return send(response, 401, { error: 'API key lokal tidak valid.' })
+}
+
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url.startsWith('/files/')) {
     let fileName
@@ -155,7 +223,7 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request)
       const url = typeof body.url === 'string' ? body.url.trim() : ''
       if (!isYouTubeUrl(url)) return send(response, 400, { error: 'URL HTTPS YouTube yang valid wajib diisi.' })
-      const raw = await runCommand('yt-dlp', ['--dump-single-json', '--skip-download', '--no-playlist', url])
+      const raw = await runCommand('yt-dlp', ['--js-runtimes', 'node', '--dump-single-json', '--skip-download', '--no-playlist', url])
       const info = JSON.parse(raw)
       const resolutions = [...new Set((info.formats || [])
         .filter((item) => item.vcodec && item.vcodec !== 'none' && item.height)
@@ -169,12 +237,24 @@ const server = createServer(async (request, response) => {
         .sort((a, b) => a - b)
       return send(response, 200, { title: safeFileTitle(info.title || ''), resolutions, fps })
     } catch (error) {
-      console.error('local yt-dlp info failed', error)
+      logLine('local yt-dlp info failed', true)
       return send(response, 502, { error: 'Metadata YouTube tidak dapat diambil.' })
     }
   }
+  if (request.method === 'GET' && request.url.startsWith('/api/status')) {
+    if (!isAuthorized(request)) return rejectUnauthorized(request, response)
+    const jobId = new URL(request.url, 'http://localhost').searchParams.get('job') || ''
+    const job = jobs.get(jobId)
+    if (!job) return send(response, 404, { error: 'Job tidak ditemukan atau sudah kedaluwarsa.' })
+    return send(response, 200, {
+      status: job.status,
+      url: job.url || undefined,
+      filename: job.filename || undefined,
+      error: job.error || undefined,
+    })
+  }
   if (request.method !== 'POST' || request.url !== '/api/download') return send(response, 404, { error: 'Route tidak ditemukan.' })
-  if (apiKey && request.headers.authorization !== `Api-Key ${apiKey}`) return send(response, 401, { error: 'API key lokal tidak valid.' })
+  if (!isAuthorized(request)) return rejectUnauthorized(request, response)
   try {
     const body = await readBody(request)
     const url = typeof body.url === 'string' ? body.url.trim() : ''
@@ -190,24 +270,13 @@ const server = createServer(async (request, response) => {
     const outputTemplate = join(downloadDir, `${id}.source.%(ext)s`)
     const outputPath = join(downloadDir, `${id}.${extension}`)
     activeJobs.add(id)
-    try {
-      const result = await runDownload(url, quality, fps, format, outputTemplate, outputPath, id)
-      const title = `${result.title} - ${quality}p${result.fps ? ` ${result.fps}fps` : ''}`
-      if (!existsSync(outputPath)) throw new Error('File hasil download tidak ditemukan.')
-      const finalFile = availableFilePath(title, extension)
-      await new Promise((resolve, reject) => rename(outputPath, finalFile.filePath, (error) => error ? reject(error) : resolve()))
-      return send(response, 200, {
-        status: 'tunnel',
-        url: `${publicBaseUrl || `http://${host}:${port}`}/files/${encodeURIComponent(finalFile.fileName)}`,
-        filename: finalFile.fileName,
-      })
-    } finally {
-      activeJobs.delete(id)
-    }
+    jobs.set(id, { status: 'processing', createdAt: Date.now(), url: null, filename: null, error: null })
+    void processDownload({ id, url, quality, fps, format, extension, outputTemplate, outputPath })
+    return send(response, 202, { status: 'processing', jobId: id })
   } catch (error) {
-    console.error('local yt-dlp download failed', error)
+    logLine('local yt-dlp download failed', true)
     return send(response, 502, { error: 'Download lokal gagal. Pastikan yt-dlp dan ffmpeg sudah terpasang.' })
   }
 })
 
-server.listen(port, host, () => console.log(`Local yt-dlp server listening on http://${host}:${port}`))
+server.listen(port, host, () => logLine(`Local yt-dlp server listening on http://${host}:${port}`))

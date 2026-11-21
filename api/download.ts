@@ -21,6 +21,7 @@ interface ProviderResponse {
   status?: string
   url?: string
   filename?: string
+  jobId?: string
   error?: { code?: string }
   picker?: Array<{ type?: string; url?: string }>
 }
@@ -154,7 +155,16 @@ export default async function handler(request: VercelRequest, response: VercelRe
             logs: backendLogs,
           })
         }
-        if (providerData.status === 'local-processing') {
+        if (providerData.status === 'processing') {
+      const jobId = typeof providerData.jobId === 'string' ? providerData.jobId : ''
+      if (!jobId) {
+        log('Provider mengembalikan status processing tanpa jobId.')
+        return json(response, { error: 'Provider gagal memulai proses download.' }, 502)
+      }
+      log(`Provider memulai job ${jobId}.`)
+      return json(response, { status: 'processing', jobId, logs: backendLogs }, 202)
+    }
+    if (providerData.status === 'local-processing') {
           log('Provider meminta pemrosesan lokal.')
           return json(response, { error: 'Provider meminta pemrosesan lokal yang belum didukung oleh KinoSave.', logs: backendLogs }, 502)
         }

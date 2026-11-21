@@ -99,6 +99,46 @@ To start Vite and the local downloader together:
 npm run dev:all
 ```
 
+## Aplikasi desktop (Electron)
+
+Launcher desktop yang menjalankan downloader lokal dan Cloudflare Tunnel hanya
+selama aplikasi terbuka. Tutup aplikasi, server ikut mati.
+
+```powershell
+cd desktop
+npm install
+npm start
+```
+
+Isi aplikasi:
+
+- Server downloader (`deploy/ytdlp/server.mjs`) dijalankan sebagai child process.
+- Cloudflare Tunnel dijalankan sebagai child process.
+- Status server dan tunnel, log, tombol Mulai/Jeda, dan tautan website.
+
+Konfigurasi bersama ada di `kinosave.config.json` (dipakai juga oleh
+`scripts/start-server.ps1`): id tunnel, hostname, port service, dan URL website.
+
+Kebutuhan lokal: `yt-dlp`, `ffmpeg`, dan `cloudflared` harus ada di PATH, dan
+kredensial tunnel harus ada di `~/.cloudflared/<tunnelId>.json`.
+
+API key dibaca berurutan dari `KINOSAVE_API_KEY`, file
+`%TEMP%\kinosave-provider-key.txt`, lalu `MEDIA_PROVIDER_API_KEY` di
+`.env.local`.
+
+Rotasi kunci: `kinosave.config.json` punya `apiKeyHashes`, daftar SHA-256 kunci
+yang tetap diterima, supaya kunci lama di Vercel tidak perlu langsung diganti.
+Log provider ditulis ke `logs/server.log`.
+
+Untuk membuat installer Windows:
+
+```powershell
+cd desktop
+npm run dist
+```
+
+Hasil installer ada di `desktop/dist`.
+
 ## Production environment
 
 Configure these Vercel environment variables:

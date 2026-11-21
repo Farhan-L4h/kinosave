@@ -1,0 +1,11 @@
+{
+  "tunnelId": "5d0a4b75-4de9-4ec0-9335-bd66557fcb27",
+  "tunnelName": "kinosave-api",
+  "hostname": "api-kinosave.han06.web.id",
+  "servicePort": 9001,
+  "websiteUrl": "https://kinosave.han06.web.id",
+  "manageTunnel": true,
+  "apiKeyHashes": [
+    "642dce3268b05ca1f167427a261288329a60555cb7ec57c5e576074843d18ea2"
+  ]
+}

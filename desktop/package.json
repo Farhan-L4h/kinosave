@@ -1,0 +1,35 @@
+{
+  "name": "kinosave-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "KinoSave launcher - runs the local downloader and Cloudflare Tunnel only while the app is open",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "web.id.han06.kinosave",
+    "productName": "KinoSave",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "services.cjs",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

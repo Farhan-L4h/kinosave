@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>KinoSave</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-mark">KS</div>
+      <div>
+        <h1>KinoSave</h1>
+        <p class="topbar-note">Downloader lokal &amp; tunnel</p>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <div class="status-row">
+          <span class="status-label">Server downloader</span>
+          <span class="pill" id="server-pill">Mati</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Cloudflare Tunnel</span>
+          <span class="pill" id="tunnel-pill">Mati</span>
+        </div>
+        <p class="error" id="error" hidden></p>
+      </section>
+
+      <section class="actions">
+        <button class="primary-button" id="toggle">Mulai</button>
+        <button class="secondary-button" id="test">Tes Koneksi</button>
+      </section>
+      <section class="actions">
+        <button class="secondary-button" id="open-website">Buka Website</button>
+        <button class="secondary-button" id="quit">Keluar</button>
+      </section>
+
+      <section class="log-panel">
+        <div class="log-head">
+          <span>Log</span>
+          <span class="muted" id="backend-url"></span>
+        </div>
+        <pre id="log"></pre>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

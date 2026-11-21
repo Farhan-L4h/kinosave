@@ -2,11 +2,12 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $keyFile = Join-Path $env:TEMP 'kinosave-provider-key.txt'
-$tunnelName = 'kinosave-api'
-$tunnelId = '5d0a4b75-4de9-4ec0-9335-bd66557fcb27'
-$tunnelConfig = Join-Path $env:TEMP 'kinosave-api-tunnel.yml'
+$config = Get-Content (Join-Path $projectRoot 'kinosave.config.json') -Raw | ConvertFrom-Json
+$tunnelName = $config.tunnelName
+$tunnelId = $config.tunnelId
+$servicePort = $config.servicePort
+$publicBaseUrl = "https://$($config.hostname)"
 $tunnelCredentials = Join-Path $HOME ".cloudflared\$tunnelId.json"
-$publicBaseUrl = 'https://api-kinosave.han06.web.id'
 
 if (-not (Test-Path (Join-Path $projectRoot 'deploy\ytdlp\server.mjs'))) {
   throw "Folder project KinoSave tidak valid: $projectRoot"
@@ -37,10 +38,11 @@ tunnel: $tunnelId
 credentials-file: $tunnelCredentials
 protocol: quic
 ingress:
-  - hostname: api-kinosave.han06.web.id
-    service: http://127.0.0.1:9001
+  - hostname: $($config.hostname)
+    service: http://127.0.0.1:$servicePort
   - service: http_status:404
 "@
+$tunnelConfig = Join-Path $env:TEMP 'kinosave-api-tunnel.yml'
 Set-Content -Path $tunnelConfig -Value $tunnelConfiguration -Encoding utf8
 
 $serverCommand = "`$env:PUBLIC_BASE_URL='$publicBaseUrl'; `$env:LOCAL_DOWNLOAD_API_KEY='$apiKey'; Set-Location '$projectRoot'; npm run download-server"

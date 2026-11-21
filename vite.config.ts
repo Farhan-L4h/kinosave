@@ -41,6 +41,25 @@ function localApiMiddleware(request: IncomingMessage, response: ServerResponse, 
     })
     return
   }
+  const requestUrl = request.url ?? ''
+  if (requestUrl.startsWith('/api/status')) {
+    void fetch(`http://127.0.0.1:9001${requestUrl}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        ...(process.env.MEDIA_PROVIDER_API_KEY ? { Authorization: `Api-Key ${process.env.MEDIA_PROVIDER_API_KEY}` } : {}),
+      },
+    }).then(async (providerResponse) => {
+      response.statusCode = providerResponse.status
+      response.setHeader('Content-Type', 'application/json')
+      response.end(await providerResponse.text())
+    }).catch(() => {
+      response.statusCode = 502
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ error: 'Service lokal tidak aktif.' }))
+    })
+    return
+  }
   if (request.url !== '/api/download') return next()
 
   void readJsonBody(request)

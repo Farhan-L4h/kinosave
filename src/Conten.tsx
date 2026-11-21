@@ -204,6 +204,23 @@ export default function KinoSave() {
     saveHistory(updated)
   }
 
+  async function waitForJob(jobId: string, signal: AbortSignal) {
+    const deadline = Date.now() + 15 * 60 * 1000
+    while (Date.now() < deadline) {
+      if (signal.aborted) throw new DOMException('Download dibatalkan.', 'AbortError')
+      await new Promise((resolve) => window.setTimeout(resolve, 2500))
+      const statusResponse = await fetch(`/api/status?job=${encodeURIComponent(jobId)}`, { signal })
+      const statusData = await statusResponse.json().catch(() => ({}))
+      if (statusResponse.status === 404) throw new Error('Job download tidak ditemukan di server. Coba lagi.')
+      if (!statusResponse.ok) throw new Error(typeof statusData.error === 'string' ? statusData.error : 'Status download sedang tidak tersedia.')
+      if (statusData.status === 'error') throw new Error(typeof statusData.error === 'string' ? statusData.error : 'Download gagal di server.')
+      if (statusData.status === 'done' && typeof statusData.url === 'string') {
+        return { url: statusData.url, filename: typeof statusData.filename === 'string' ? statusData.filename : undefined }
+      }
+    }
+    throw new Error('Waktu proses download habis. Coba lagi.')
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     resetFeedback()
@@ -234,12 +251,17 @@ export default function KinoSave() {
     addHistory(normalizedUrl, platform, format, 'pending', videoTitle || undefined)
 
     let progressTimer: number | undefined
+    let polling = false
     const controller = new AbortController()
     setCancelController(controller)
     try {
       progressTimer = window.setInterval(() => {
         setProgress((current) => {
           if (current >= 88) return current
+          if (polling) {
+            setProgressLabel('Memantau proses download di server...')
+            return Math.min(current + 1, 88)
+          }
           if (current < 35) setProgressLabel('Mengambil metadata YouTube...')
           else if (current < 70) setProgressLabel(format === 'video' ? 'Mengunduh dan menggabungkan media...' : 'Mengunduh dan menyiapkan MP3...')
           else setProgressLabel(format === 'video' ? 'Mengonversi ke MP4 kompatibel...' : 'Menyiapkan file audio...')
@@ -254,19 +276,28 @@ export default function KinoSave() {
         signal: controller.signal,
       })
       const data = await response.json().catch(() => ({}))
-      window.clearInterval(progressTimer)
       const responseMessage = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`
       addDebugLog(`Response backend: HTTP ${response.status}; status=${response.ok ? 'OK' : 'GAGAL'}${data.error ? `; pesan="${responseMessage}"` : '; payload diterima'}`)
       if (Array.isArray(data.logs)) data.logs.forEach((entry: unknown) => { if (typeof entry === 'string') addBackendLog(entry) })
       if (!response.ok) throw new Error(data.error || 'Layanan download belum tersedia.')
-      if (!data.downloadUrl) {
+
+      let downloadUrl = typeof data.downloadUrl === 'string' ? data.downloadUrl : ''
+      let providerFilename = typeof data.filename === 'string' ? data.filename : ''
+      if (!downloadUrl && data.status === 'processing' && typeof data.jobId === 'string') {
+        polling = true
+        addDebugLog(`Job ${data.jobId} berjalan di server; mulai polling status.`)
+        const job = await waitForJob(data.jobId, controller.signal)
+        downloadUrl = job.url
+        providerFilename = job.filename || ''
+      }
+      if (!downloadUrl) {
         addDebugLog(`Response gagal: downloadUrl tidak ada; keys=${Object.keys(data).join(', ') || 'kosong'}.`)
         throw new Error('Server tidak mengembalikan link download.')
       }
 
       const extension = format === 'audio' ? 'mp3' : 'mp4'
-      const filename = typeof data.filename === 'string' && data.filename.trim()
-        ? data.filename
+      const filename = providerFilename.trim()
+        ? providerFilename
         : `${videoTitle || 'kinosave-download'}.${extension}`
       setResult({ downloadUrl: data.downloadUrl, filename, platform })
       setProgress(100)
